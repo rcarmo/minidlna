@@ -7,3 +7,7 @@ Things left to do:
 
 Wishlist:
 * Transcoding
+
+Dominik:
+* send buffer size needs optimizations
+* inotify stuff

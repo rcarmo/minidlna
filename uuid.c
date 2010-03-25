@@ -1,27 +1,13 @@
 /* MiniDLNA project
  *
  * http://sourceforge.net/projects/minidlna/
+ * (c) 2009 Justin Maggard
+ * This software is subject to the conditions detailed
+ * in the LICENCE file provided within the distribution
  *
  * Much of this code and ideas for this code have been taken
  * from Helge Deller's proposed Linux kernel patch (which
  * apparently never made it upstream), and some from Busybox.
- *
- * MiniDLNA media server
- * Copyright (C) 2009  Justin Maggard
- *
- * This file is part of MiniDLNA.
- *
- * MiniDLNA is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
- * MiniDLNA is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with MiniDLNA. If not, see <http://www.gnu.org/licenses/>.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -30,6 +16,10 @@
 #include <unistd.h>
 #include <sys/syscall.h>
 #include <string.h>
+#ifdef __APPLE__
+#include <mach/mach_time.h>
+#include <sys/socket.h>
+#endif
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <sys/time.h>
@@ -49,10 +39,14 @@ static int clock_seq_initialized;
 unsigned long long
 monotonic_us(void)
 {
+#ifdef __APPLE__
+	return mach_absolute_time();
+#else
 	struct timespec ts;
 
 	syscall(__NR_clock_gettime, CLOCK_MONOTONIC, &ts);
 	return ts.tv_sec * 1000000ULL + ts.tv_nsec / 1000;
+#endif
 }
 
 int
@@ -125,7 +119,11 @@ generate_uuid(unsigned char uuid_out[16])
 	static char last_node[6] = { 0, 0, 0, 0, 0, 0 };
 
 	struct timespec ts;
+#ifdef __APPLE__
+	uint64_t time_all = mach_absolute_time();
+#else
 	u_int64_t time_all;
+#endif
 	int inc_clock_seq = 0;
 
 	unsigned char mac[6];
@@ -162,9 +160,11 @@ generate_uuid(unsigned char uuid_out[16])
 	 * nanosecond intervals since 00:00:00.00, 15 October 1582 (the date of
 	 * Gregorian reform to the Christian calendar).
 	 */
+#ifndef __APPLE__
 	syscall(__NR_clock_gettime, CLOCK_REALTIME, &ts);
 	time_all = ((u_int64_t)ts.tv_sec) * (NSEC_PER_SEC / 100);
 	time_all += ts.tv_nsec / 100;
+#endif
 
 	/* add offset from Gregorian Calendar to Jan 1 1970 */
 	time_all += 12219292800000ULL * (NSEC_PER_MSEC / 100);

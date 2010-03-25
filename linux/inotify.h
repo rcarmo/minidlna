@@ -7,7 +7,9 @@
 #ifndef _LINUX_INOTIFY_H
 #define _LINUX_INOTIFY_H
 
-#include <linux/types.h>
+#if defined(HAVE_LINUX_TYPES_H)
+#include <linux/types.h> // Defines __u32
+#endif
 
 /*
  * struct inotify_event - structure read from the inotify device for each event

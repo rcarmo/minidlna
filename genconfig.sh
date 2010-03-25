@@ -2,23 +2,9 @@
 # $Id$
 # MiniDLNA project
 # http://sourceforge.net/projects/minidlna/
-#
-# MiniDLNA media server
-# Copyright (C) 2008-2009  Justin Maggard
-#
-# This file is part of MiniDLNA.
-#
-# MiniDLNA is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License version 2 as
-# published by the Free Software Foundation.
-#
-# MiniDLNA is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with MiniDLNA. If not, see <http://www.gnu.org/licenses/>.
+# (c) 2008-2009 Justin Maggard
+# This software is subject to the conditions detailed in the
+# LICENCE file provided within the distribution
 
 RM="rm -f"
 CONFIGFILE="config.h"
@@ -26,8 +12,6 @@ CONFIGMACRO="__CONFIG_H__"
 
 # Database path
 DB_PATH="/tmp/minidlna"
-# Log path
-LOG_PATH="${DB_PATH}"
 
 # detecting the OS name and version
 OS_NAME=`uname -s`
@@ -35,12 +19,30 @@ OS_VERSION=`uname -r`
 TIVO="/*#define TIVO_SUPPORT*/"
 NETGEAR="/*#define NETGEAR*/"
 READYNAS="/*#define READYNAS*/"
-PNPX="#define PNPX 0"
+SENDFILE="/*#define USE_SENDFILE*/"
+INOTIFY="/*#define USE_INOTIFY */"
 
 ${RM} ${CONFIGFILE}
 
 # Detect if there are missing headers
 # NOTE: This check only works with a normal distro
+if [ "$OS_NAME" = "Darwin" ]; then
+[ ! -e "/opt/local/include/jpeglib.h" ] && MISSING="libjpeg $MISSING"
+[ ! -e "/opt/local/include/libexif/exif-loader.h" ] && MISSING="libexif $MISSING"
+[ ! -e "/opt/local/include/id3tag.h" ] && MISSING="libid3tag $MISSING"
+[ ! -e "/opt/local/include/ogg/ogg.h" ] && MISSING="libogg $MISSING"
+[ ! -e "/opt/local/include/vorbis/codec.h" ] && MISSING="libvorbis $MISSING"
+[ ! -e "/opt/local/include/FLAC/metadata.h" ] && MISSING="libflac $MISSING"
+[ ! -e "/opt/local/include/ffmpeg/avutil.h" -a \
+  ! -e "/opt/local/include/libavutil/avutil.h" -a \
+  ! -e "/opt/local/include/ffmpeg/libavutil/avutil.h" ] && MISSING="libavutil $MISSING"
+[ ! -e "/opt/local/include/ffmpeg/avformat.h" -a \
+  ! -e "/opt/local/include/libavformat/avformat.h" -a \
+  ! -e "/opt/local/include/ffmpeg/libavformat/avformat.h" ] && MISSING="libavformat $MISSING"
+[ ! -e "/opt/local/include/ffmpeg/avcodec.h" -a \
+  ! -e "/opt/local/include/libavcodec/avcodec.h" -a \
+  ! -e "/opt/local/include/ffmpeg/libavcodec/avcodec.h" ] && MISSING="libavcodec $MISSING"
+else
 [ ! -e "/usr/include/sqlite3.h" ] && MISSING="libsqlite3 $MISSING"
 [ ! -e "/usr/include/jpeglib.h" ] && MISSING="libjpeg $MISSING"
 [ ! -e "/usr/include/libexif/exif-loader.h" ] && MISSING="libexif $MISSING"
@@ -57,6 +59,7 @@ ${RM} ${CONFIGFILE}
 [ ! -e "/usr/include/ffmpeg/avcodec.h" -a \
   ! -e "/usr/include/libavcodec/avcodec.h" -a \
   ! -e "/usr/include/ffmpeg/libavcodec/avcodec.h" ] && MISSING="libavcodec $MISSING"
+fi
 if [ -n "$MISSING" ]; then
 	echo -e "\nERROR!  Cannot continue."
 	echo -e "The following required libraries are either missing, or are missing development headers:\n"
@@ -74,6 +77,13 @@ echo "" >> ${CONFIGFILE}
 
 # OS Specific stuff
 case $OS_NAME in
+	Darwin)
+		MAJORVER=`echo $OS_VERSION | cut -d. -f1`
+		MINORVER=`echo $OS_VERSION | cut -d. -f2`
+		#echo "OpenBSD majorversion=$MAJORVER minorversion=$MINORVER"
+ 		SENDFILE="#define USE_SENDFILE"
+		OS_URL=http://www.apple.com/
+		;;
 	OpenBSD)
 		MAJORVER=`echo $OS_VERSION | cut -d. -f1`
 		MINORVER=`echo $OS_VERSION | cut -d. -f2`
@@ -103,9 +113,6 @@ case $OS_NAME in
 		OS_URL=http://www.netbsd.org/
 		;;
 	SunOS)
-		echo "#define USE_IPF 1" >> ${CONFIGFILE}
-		echo "#define LOG_PERROR 0" >> ${CONFIGFILE}
-		echo "#define SOLARIS_KSTATS 1" >> ${CONFIGFILE}
 		echo "typedef uint64_t u_int64_t;" >> ${CONFIGFILE}
 		echo "typedef uint32_t u_int32_t;" >> ${CONFIGFILE}
 		echo "typedef uint16_t u_int16_t;" >> ${CONFIGFILE}
@@ -118,24 +125,23 @@ case $OS_NAME in
 		KERNVERB=`echo $OS_VERSION | awk -F. '{print $2}'`
 		KERNVERC=`echo $OS_VERSION | awk -F. '{print $3}'`
 		KERNVERD=`echo $OS_VERSION | awk -F. '{print $4}'`
+		SENDFILE="#define USE_SENDFILE"
+		INOTIFY="#define USE_INOTIFY"
 		#echo "$KERNVERA.$KERNVERB.$KERNVERC.$KERNVERD"
 		# NETGEAR ReadyNAS special case
 		if [ -f /etc/raidiator_version ]; then
 			OS_NAME=$(awk -F'!!|=' '{ print $1 }' /etc/raidiator_version)
 			OS_VERSION=$(awk -F'!!|[=,.]' '{ print $3"."$4 }' /etc/raidiator_version)
 			OS_URL="http://www.readynas.com/"
-			LOG_PATH="/var/log"
 			DB_PATH="/var/cache/minidlna"
 			TIVO="#define TIVO_SUPPORT"
 			NETGEAR="#define NETGEAR"
 			READYNAS="#define READYNAS"
-			PNPX="#define PNPX 5"
 		# Debian GNU/Linux special case
 		elif [ -f /etc/debian_version ]; then
 			OS_NAME=Debian
 			OS_VERSION=`cat /etc/debian_version`
 			OS_URL=http://www.debian.org/
-			LOG_PATH="/var/log"
 			# use lsb_release (Linux Standard Base) when available
 			LSB_RELEASE=`which lsb_release 2>/dev/null`
 			if [ 0 -eq $? ]; then
@@ -157,22 +163,26 @@ case $OS_NAME in
 		;;
 esac
 
-echo "#define OS_NAME			\"$OS_NAME\"" >> ${CONFIGFILE}
-echo "#define OS_VERSION		\"$OS_NAME/$OS_VERSION\"" >> ${CONFIGFILE}
-echo "#define OS_URL			\"${OS_URL}\"" >> ${CONFIGFILE}
+echo "#define OS_NAME		\"$OS_NAME\"" >> ${CONFIGFILE}
+echo "#define OS_VERSION	\"$OS_NAME/$OS_VERSION\"" >> ${CONFIGFILE}
+echo "#define OS_URL		\"${OS_URL}\"" >> ${CONFIGFILE}
 echo "" >> ${CONFIGFILE}
 
 echo "/* full path of the file database */" >> ${CONFIGFILE}
-echo "#define DEFAULT_DB_PATH		\"${DB_PATH}\"" >> ${CONFIGFILE}
-echo "" >> ${CONFIGFILE}
-
-echo "/* full path of the log directory */" >> ${CONFIGFILE}
-echo "#define DEFAULT_LOG_PATH	\"${LOG_PATH}\"" >> ${CONFIGFILE}
+echo "#define DEFAULT_DB_PATH	\"${DB_PATH}\"" >> ${CONFIGFILE}
 echo "" >> ${CONFIGFILE}
 
 echo "/* Comment the following line to use home made daemonize() func instead" >> ${CONFIGFILE}
 echo " * of BSD daemon() */" >> ${CONFIGFILE}
 echo "#define USE_DAEMON" >> ${CONFIGFILE}
+echo "" >> ${CONFIGFILE}
+
+echo "/* Enable to use sendfile */" >> ${CONFIGFILE}
+echo "${SENDFILE}" >> ${CONFIGFILE}
+echo "" >> ${CONFIGFILE}
+
+echo "/* Enable to use linux inotify */" >> ${CONFIGFILE}
+echo "${INOTIFY}" >> ${CONFIGFILE}
 echo "" >> ${CONFIGFILE}
 
 echo "/* Enable if the system inotify.h exists.  Otherwise our own inotify.h will be used. */" >> ${CONFIGFILE}
@@ -192,22 +202,12 @@ echo "/*#define HAVE_ICONV_H*/" >> ${CONFIGFILE}
 fi
 echo "" >> ${CONFIGFILE}
 
-echo "/* Enable if the system libintl.h exists for NLS support. */" >> ${CONFIGFILE}
-if [ -f /usr/include/libintl.h ]; then
-echo "#define ENABLE_NLS" >> ${CONFIGFILE}
-else
-echo "/*#define ENABLE_NLS*/" >> ${CONFIGFILE}
-fi
-echo "" >> ${CONFIGFILE}
-
 echo "/* Enable NETGEAR-specific tweaks. */" >> ${CONFIGFILE}
 echo "${NETGEAR}" >> ${CONFIGFILE}
 echo "/* Enable ReadyNAS-specific tweaks. */" >> ${CONFIGFILE}
 echo "${READYNAS}" >> ${CONFIGFILE}
 echo "/* Compile in TiVo support. */" >> ${CONFIGFILE}
 echo "${TIVO}" >> ${CONFIGFILE}
-echo "/* Enable PnPX support. */" >> ${CONFIGFILE}
-echo "${PNPX}" >> ${CONFIGFILE}
 echo "" >> ${CONFIGFILE}
 
 echo "#endif" >> ${CONFIGFILE}

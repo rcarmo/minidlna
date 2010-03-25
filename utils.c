@@ -1,25 +1,29 @@
-/* MiniDLNA media server
- * Copyright (C) 2008-2009  Justin Maggard
+/*  MiniDLNA media server
+ *  Copyright (C) 2008-2009  Justin Maggard
  *
- * This file is part of MiniDLNA.
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
  *
- * MiniDLNA is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
  *
- * MiniDLNA is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with MiniDLNA. If not, see <http://www.gnu.org/licenses/>.
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
+#if defined(__APPLE__) || defined(BSD)
+#include <sys/syslimits.h>
+#else
 #include <linux/limits.h>
+#endif
 #include <sys/stat.h>
 #include <unistd.h>
 #include <sys/types.h>
@@ -28,22 +32,7 @@
 #include <errno.h>
 
 #include "minidlnatypes.h"
-#include "upnpglobalvars.h"
 #include "log.h"
-
-inline int
-strcatf(struct string_s *str, const char *fmt, ...)
-{
-	int ret;
-	va_list ap;
-
-	va_start(ap, fmt);
-	ret = vsnprintf(str->data + str->off, str->size - str->off, fmt, ap);
-	str->off += ret;
-	va_end(ap);
-
-	return ret;
-}
 
 int
 ends_with(const char * haystack, const char * needle)
@@ -114,12 +103,7 @@ modifyString(char * string, const char * before, const char * after, short like)
 			chgcnt++;
 			s = p+oldlen;
 		}
-		s = realloc(string, strlen(string)+((newlen-oldlen)*chgcnt)+1+like);
-		/* If we failed to realloc, return the original alloc'd string */
-		if( s )
-			string = s;
-		else
-			return string;
+		string = realloc(string, strlen(string)+((newlen-oldlen)*chgcnt)+1+like);
 	}
 
 	s = string;
@@ -155,7 +139,7 @@ modifyString(char * string, const char * before, const char * after, short like)
 }
 
 char *
-escape_tag(const char *tag, int force_alloc)
+escape_tag(const char *tag)
 {
 	char *esc_tag = NULL;
 
@@ -166,8 +150,6 @@ escape_tag(const char *tag, int force_alloc)
 		esc_tag = modifyString(esc_tag, "<", "&amp;lt;", 0);
 		esc_tag = modifyString(esc_tag, ">", "&amp;gt;", 0);
 	}
-	else if( force_alloc )
-		esc_tag = strdup(tag);
 
 	return esc_tag;
 }
@@ -191,29 +173,30 @@ make_dir(char * path, mode_t mode)
 	struct stat st;
 
 	do {
-		c = '\0';
+		c = 0;
 
 		/* Bypass leading non-'/'s and then subsequent '/'s. */
+		/* mls - broken on OSX */
+#ifndef __APPLE__
 		while (*s) {
 			if (*s == '/') {
 				do {
 					++s;
 				} while (*s == '/');
 				c = *s;     /* Save the current char */
-				*s = '\0';     /* and replace it with nul. */
+				*s = 0;     /* and replace it with nul. */
 				break;
 			}
 			++s;
 		}
+#endif
 
 		if (mkdir(path, mode) < 0) {
 			/* If we failed for any other reason than the directory
 			 * already exists, output a diagnostic and return -1.*/
-			if (errno != EEXIST || (stat(path, &st) < 0 || !S_ISDIR(st.st_mode))) {
-				DPRINTF(E_WARN, L_GENERAL, "make_dir: cannot create directory '%s'\n", path);
-				if (c)
-					*s = c;
-				return -1;
+			if ( (errno != EEXIST && errno != EISDIR)
+			    || (stat(path, &st) < 0 || !S_ISDIR(st.st_mode))) {
+				break;
 			}
 		}
 	        if (!c)
@@ -223,6 +206,9 @@ make_dir(char * path, mode_t mode)
 		*s = c;
 
 	} while (1);
+
+	DPRINTF(E_WARN, L_GENERAL, "make_dir: cannot create directory '%s'. errno=%d, error=%s\n", path, errno, strerror(errno));
+	return -1;
 }
 
 int
@@ -264,29 +250,6 @@ int
 is_playlist(const char * file)
 {
 	return (ends_with(file, ".m3u") || ends_with(file, ".pls"));
-}
-
-int
-is_album_art(const char * name)
-{
-	struct album_art_name_s * album_art_name;
-
-	/* Check if this file name matches one of the default album art names */
-	for( album_art_name = album_art_names; album_art_name; album_art_name = album_art_name->next )
-	{
-		if( album_art_name->wildcard )
-		{
-			if( strncmp(album_art_name->name, name, strlen(album_art_name->name)) == 0 )
-				break;
-		}
-		else
-		{
-			if( strcmp(album_art_name->name, name) == 0 )
-				break;
-		}
-	}
-
-	return (album_art_name ? 1 : 0);
 }
 
 int

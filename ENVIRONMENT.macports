@@ -1,0 +1,2 @@
+export CPPFLAGS="-I/opt/local/include -I/opt/local/include/libavutil -I/opt/local/include/libavcodec -I/opt/local/include/libavformat"
+export LDFLAGS=-L/opt/local/lib

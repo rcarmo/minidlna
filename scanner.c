@@ -1,19 +1,19 @@
-/* MiniDLNA media server
- * Copyright (C) 2008-2009  Justin Maggard
+/*  MiniDLNA media server
+ *  Copyright (C) 2008-2009  Justin Maggard
  *
- * This file is part of MiniDLNA.
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
  *
- * MiniDLNA is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
  *
- * MiniDLNA is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with MiniDLNA. If not, see <http://www.gnu.org/licenses/>.
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 #include <stdio.h>
 #include <string.h>
@@ -22,16 +22,14 @@
 #include <dirent.h>
 #include <locale.h>
 #include <libgen.h>
-#include <inttypes.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/resource.h>
-
-#include "config.h"
-
-#ifdef ENABLE_NLS
-#include <libintl.h>
+#include <sys/param.h>
+#if defined(__APPLE__) || defined(BSD)
+#include <sys/syslimits.h>
 #endif
+
 #include <sqlite3.h>
 
 #include "upnpglobalvars.h"
@@ -46,7 +44,7 @@ int valid_cache = 0;
 
 struct virtual_item
 {
-	sqlite3_int64 objectID;
+	int  objectID;
 	char parentID[64];
 	char name[256];
 };
@@ -54,55 +52,63 @@ struct virtual_item
 sqlite_int64
 get_next_available_id(const char * table, const char * parentID)
 {
-		char *ret, *base;
+		char * sql;
+		char **result;
+		int ret, rows;
 		sqlite_int64 objectID = 0;
 
-		ret = sql_get_text_field(db, "SELECT OBJECT_ID from %s where ID = "
-		                             "(SELECT max(ID) from %s where PARENT_ID = '%s')",
-		                             table, table, parentID);
-		if( ret )
+		asprintf(&sql, "SELECT OBJECT_ID from %s where ID = "
+		               "(SELECT max(ID) from %s where PARENT_ID = '%s')", table, table, parentID);
+		ret = sql_get_table(db, sql, &result, &rows, NULL);
+		if( rows )
 		{
-			base = strrchr(ret, '$');
-			if( base )
-				objectID = strtoll(base+1, NULL, 16) + 1;
-			sqlite3_free(ret);
+			objectID = strtoll(strrchr(result[1], '$')+1, NULL, 16) + 1;
 		}
+		sqlite3_free_table(result);
+		free(sql);
 
 		return objectID;
 }
 
-int
+long long int
 insert_container(const char * item, const char * rootParent, const char * refID, const char *class,
-                 const char *artist, const char *genre, const char *album_art, sqlite3_int64 *objectID, sqlite3_int64 *parentID)
+                 const char *artist, const char *genre, const char *album_art)
 {
-	char *result;
-	char *base;
-	int ret = 0;
+	char **result;
+	char **result2;
+	char *sql;
+	int cols, rows, ret;
+	int parentID = 0, objectID = 0;
 	sqlite_int64 detailID = 0;
 
-	result = sql_get_text_field(db, "SELECT OBJECT_ID from OBJECTS"
-	                                " where PARENT_ID = '%s'"
-			                " and NAME = '%q'"
-	                                " and CLASS = 'container.%s' limit 1",
-	                                rootParent, item, class);
-	if( result )
+	sql = sqlite3_mprintf("SELECT OBJECT_ID from OBJECTS"
+	                      " where PARENT_ID = '%s'"
+			      " and NAME = '%q'"
+	                      " and CLASS = 'container.%s' limit 1",
+	                      rootParent, item, class);
+	ret = sql_get_table(db, sql, &result, &rows, &cols);
+	sqlite3_free(sql);
+	if( cols )
 	{
-		base = strrchr(result, '$');
-		if( base )
-			*parentID = strtoll(base+1, NULL, 16);
-		else
-			*parentID = 0;
-		*objectID = get_next_available_id("OBJECTS", result);
+		parentID = strtol(rindex(result[1], '$')+1, NULL, 16);
+		objectID = get_next_available_id("OBJECTS", result[1]);
 	}
 	else
 	{
-		*objectID = 0;
-		*parentID = get_next_available_id("OBJECTS", rootParent);
+		parentID = get_next_available_id("OBJECTS", rootParent);
 		if( refID )
 		{
-			result = sql_get_text_field(db, "SELECT DETAIL_ID from OBJECTS where OBJECT_ID = %Q", refID);
-			if( result )
-				detailID = strtoll(result, NULL, 10);
+			sql = sqlite3_mprintf("SELECT DETAIL_ID from OBJECTS where OBJECT_ID = %Q", refID);
+			ret = sql_get_table(db, sql, &result2, &rows, NULL);
+			if( ret == SQLITE_OK )
+			{
+				if( rows )
+				{
+					detailID = strtoll(result2[1], NULL, 10);
+				}
+				sqlite3_free_table(result2);
+			}
+			sqlite3_free(sql);
 		}
 		if( !detailID )
 		{
@@ -111,22 +117,22 @@ insert_container(const char * item, const char * rootParent, const char * refID,
 		ret = sql_exec(db, "INSERT into OBJECTS"
 		                   " (OBJECT_ID, PARENT_ID, REF_ID, DETAIL_ID, CLASS, NAME) "
 		                   "VALUES"
-		                   " ('%s$%"PRIX64"', '%s', %Q, %"PRId64", 'container.%s', '%q')",
-		                   rootParent, *parentID, rootParent, refID, detailID, class, item);
+		                   " ('%s$%X', '%s', %Q, %lld, 'container.%s', '%q')",
+		                   rootParent, parentID, rootParent, refID, detailID, class, item);
 	}
-	sqlite3_free(result);
+	sqlite3_free_table(result);
 
-	return ret;
+	return (long long)parentID<<32|objectID;
 }
 
-static void
-insert_containers(const char * name, const char *path, const char * refID, const char * class, sqlite3_int64 detailID)
+void
+insert_containers(const char * name, const char *path, const char * refID, const char * class, long unsigned int detailID)
 {
 	char *sql;
 	char **result;
 	int ret;
 	int cols, row;
-	sqlite_int64 objectID, parentID;
+	sqlite_int64 container;
 
 	if( strstr(class, "imageItem") )
 	{
@@ -137,7 +143,7 @@ insert_containers(const char * name, const char *path, const char * refID, const
 		static struct virtual_item last_camdate;
 		static sqlite_int64 last_all_objectID = 0;
 
-		asprintf(&sql, "SELECT DATE, CREATOR from DETAILS where ID = %"PRId64, detailID);
+		asprintf(&sql, "SELECT DATE, CREATOR from DETAILS where ID = %lu", detailID);
 		ret = sql_get_table(db, sql, &result, &row, &cols);
 		free(sql);
 		if( ret == SQLITE_OK )
@@ -153,7 +159,7 @@ insert_containers(const char * name, const char *path, const char * refID, const
 		}
 		else
 		{
-			strcpy(date_taken, _("Unknown Date"));
+			strcpy(date_taken, "Unknown Date");
 		}
 		if( valid_cache && strcmp(last_date.name, date_taken) == 0 )
 		{
@@ -162,16 +168,16 @@ insert_containers(const char * name, const char *path, const char * refID, const
 		}
 		else
 		{
-			insert_container(date_taken, IMAGE_DATE_ID, NULL, "album.photoAlbum", NULL, NULL, NULL, &objectID, &parentID);
-			sprintf(last_date.parentID, IMAGE_DATE_ID"$%"PRIX64, parentID);
-			last_date.objectID = objectID;
+			container = insert_container(date_taken, "3$12", NULL, "album.photoAlbum", NULL, NULL, NULL);
+			sprintf(last_date.parentID, "3$12$%llX", container>>32);
+			last_date.objectID = (int)container;
 			strcpy(last_date.name, date_taken);
 			//DEBUG DPRINTF(E_DEBUG, L_SCANNER, "Creating cached date item: %s/%s/%X\n", last_date.name, last_date.parentID, last_date.objectID);
 		}
 		sql_exec(db, "INSERT into OBJECTS"
 		             " (OBJECT_ID, PARENT_ID, REF_ID, CLASS, DETAIL_ID, NAME) "
 		             "VALUES"
-		             " ('%s$%"PRIX64"', '%s', '%s', '%s', %"PRId64", %Q)",
+		             " ('%s$%X', '%s', '%s', '%s', %lu, %Q)",
 		             last_date.parentID, last_date.objectID, last_date.parentID, refID, class, detailID, name);
 
 		if( cam )
@@ -181,12 +187,12 @@ insert_containers(const char * name, const char *path, const char * refID, const
 		}
 		else
 		{
-			strcpy(camera, _("Unknown Camera"));
+			strcpy(camera, "Unknown Camera");
 		}
 		if( !valid_cache || strcmp(camera, last_cam.name) != 0 )
 		{
-			insert_container(camera, IMAGE_CAMERA_ID, NULL, "storageFolder", NULL, NULL, NULL, &objectID, &parentID);
-			sprintf(last_cam.parentID, IMAGE_CAMERA_ID"$%"PRIX64, parentID);
+			container = insert_container(camera, "3$13", NULL, "storageFolder", NULL, NULL, NULL);
+			sprintf(last_cam.parentID, "3$13$%llX", container>>32);
 			strncpy(last_cam.name, camera, 255);
 			last_camdate.name[0] = '\0';
 		}
@@ -197,31 +203,31 @@ insert_containers(const char * name, const char *path, const char * refID, const
 		}
 		else
 		{
-			insert_container(date_taken, last_cam.parentID, NULL, "album.photoAlbum", NULL, NULL, NULL, &objectID, &parentID);
-			sprintf(last_camdate.parentID, "%s$%"PRIX64, last_cam.parentID, parentID);
-			last_camdate.objectID = objectID;
+			container = insert_container(date_taken, last_cam.parentID, NULL, "album.photoAlbum", NULL, NULL, NULL);
+			sprintf(last_camdate.parentID, "%s$%llX", last_cam.parentID, container>>32);
+			last_camdate.objectID = (int)container;
 			strcpy(last_camdate.name, date_taken);
 			//DEBUG DPRINTF(E_DEBUG, L_SCANNER, "Creating cached camdate item: %s/%s/%s/%X\n", camera, last_camdate.name, last_camdate.parentID, last_camdate.objectID);
 		}
 		sql_exec(db, "INSERT into OBJECTS"
 		             " (OBJECT_ID, PARENT_ID, REF_ID, CLASS, DETAIL_ID, NAME) "
 		             "VALUES"
-		             " ('%s$%"PRIX64"', '%s', '%s', '%s', %"PRId64", %Q)",
+		             " ('%s$%X', '%s', '%s', '%s', %lu, %Q)",
 		             last_camdate.parentID, last_camdate.objectID, last_camdate.parentID, refID, class, detailID, name);
 		/* All Images */
 		if( !last_all_objectID )
 		{
-			last_all_objectID = get_next_available_id("OBJECTS", IMAGE_ALL_ID);
+			last_all_objectID = get_next_available_id("OBJECTS", "3$11");
 		}
 		sql_exec(db, "INSERT into OBJECTS"
 		             " (OBJECT_ID, PARENT_ID, REF_ID, CLASS, DETAIL_ID, NAME) "
 		             "VALUES"
-		             " ('"IMAGE_ALL_ID"$%"PRIX64"', '"IMAGE_ALL_ID"', '%s', '%s', %"PRId64", %Q)",
+		             " ('3$11$%llX', '3$11', '%s', '%s', %lu, %Q)",
 		             last_all_objectID++, refID, class, detailID, name);
 	}
 	else if( strstr(class, "audioItem") )
 	{
-		asprintf(&sql, "SELECT ALBUM, ARTIST, GENRE, ALBUM_ART from DETAILS where ID = %"PRId64, detailID);
+		asprintf(&sql, "SELECT ALBUM, CREATOR, GENRE, ALBUM_ART from DETAILS where ID = %lu", detailID);
 		ret = sql_get_table(db, sql, &result, &row, &cols);
 		free(sql);
 		if( ret != SQLITE_OK )
@@ -252,109 +258,107 @@ insert_containers(const char * name, const char *path, const char * refID, const
 			else
 			{
 				strcpy(last_album.name, album);
-				insert_container(album, MUSIC_ALBUM_ID, NULL, "album.musicAlbum", artist, genre, album_art, &objectID, &parentID);
-				sprintf(last_album.parentID, MUSIC_ALBUM_ID"$%llX", parentID);
-				last_album.objectID = objectID;
+				container = insert_container(album, "1$7", NULL, "album.musicAlbum", artist, genre, album_art);
+				sprintf(last_album.parentID, "1$7$%llX", container>>32);
+				last_album.objectID = (int)container;
 				//DEBUG DPRINTF(E_DEBUG, L_SCANNER, "Creating cached album item: %s/%s/%X\n", last_album.name, last_album.parentID, last_album.objectID);
 			}
 			sql_exec(db, "INSERT into OBJECTS"
 			             " (OBJECT_ID, PARENT_ID, REF_ID, CLASS, DETAIL_ID, NAME) "
 			             "VALUES"
-			             " ('%s$%"PRIX64"', '%s', '%s', '%s', %"PRId64", %Q)",
+			             " ('%s$%X', '%s', '%s', '%s', %lu, %Q)",
 			             last_album.parentID, last_album.objectID, last_album.parentID, refID, class, detailID, name);
 		}
 		if( artist )
 		{
 			if( !valid_cache || strcmp(artist, last_artist.name) != 0 )
 			{
-				insert_container(artist, MUSIC_ARTIST_ID, NULL, "person.musicArtist", NULL, genre, NULL, &objectID, &parentID);
-				sprintf(last_artist.parentID, MUSIC_ARTIST_ID"$%"PRIX64, parentID);
+				container = insert_container(artist, "1$6", NULL, "person.musicArtist", NULL, genre, NULL);
+				sprintf(last_artist.parentID, "1$6$%llX", container>>32);
 				strcpy(last_artist.name, artist);
 				last_artistAlbum.name[0] = '\0';
 				/* Add this file to the "- All Albums -" container as well */
-				insert_container(_("- All Albums -"), last_artist.parentID, NULL, "album", artist, genre, NULL, &objectID, &parentID);
-				sprintf(last_artistAlbumAll.parentID, "%s$%"PRIX64, last_artist.parentID, parentID);
-				last_artistAlbumAll.objectID = objectID;
+				container = insert_container("- All Albums -", last_artist.parentID, NULL, "storageFolder", artist, genre, NULL);
+				sprintf(last_artistAlbumAll.parentID, "%s$%llX", last_artist.parentID, container>>32);
+				last_artistAlbumAll.objectID = (int)container;
 			}
 			else
 			{
 				last_artistAlbumAll.objectID++;
 			}
-			if( valid_cache && strcmp(album?album:_("Unknown Album"), last_artistAlbum.name) == 0 )
+			if( valid_cache && strcmp(album?album:"Unknown Album", last_artistAlbum.name) == 0 )
 			{
 				last_artistAlbum.objectID++;
 				//DEBUG DPRINTF(E_DEBUG, L_SCANNER, "Using last artist/album item: %s/%s/%X\n", last_artist.name, last_artist.parentID, last_artist.objectID);
 			}
 			else
 			{
-				insert_container(album?album:_("Unknown Album"), last_artist.parentID, album?last_album.parentID:NULL,
-				                 "album.musicAlbum", artist, genre, album_art, &objectID, &parentID);
-				sprintf(last_artistAlbum.parentID, "%s$%"PRIX64, last_artist.parentID, parentID);
-				last_artistAlbum.objectID = objectID;
-				strcpy(last_artistAlbum.name, album?album:_("Unknown Album"));
+				container = insert_container(album?album:"Unknown Album", last_artist.parentID, album?last_album.parentID:NULL, "album.musicAlbum", artist, genre, album_art);
+				sprintf(last_artistAlbum.parentID, "%s$%llX", last_artist.parentID, container>>32);
+				last_artistAlbum.objectID = (int)container;
+				strcpy(last_artistAlbum.name, album?album:"Unknown Album");
 				//DEBUG DPRINTF(E_DEBUG, L_SCANNER, "Creating cached artist/album item: %s/%s/%X\n", last_artist.name, last_artist.parentID, last_artist.objectID);
 			}
 			sql_exec(db, "INSERT into OBJECTS"
 			             " (OBJECT_ID, PARENT_ID, REF_ID, CLASS, DETAIL_ID, NAME) "
 			             "VALUES"
-			             " ('%s$%"PRIX64"', '%s', '%s', '%s', %"PRId64", %Q)",
+			             " ('%s$%X', '%s', '%s', '%s', %lu, %Q)",
 			             last_artistAlbum.parentID, last_artistAlbum.objectID, last_artistAlbum.parentID, refID, class, detailID, name);
 			sql_exec(db, "INSERT into OBJECTS"
 			             " (OBJECT_ID, PARENT_ID, REF_ID, CLASS, DETAIL_ID, NAME) "
 			             "VALUES"
-			             " ('%s$%"PRIX64"', '%s', '%s', '%s', %"PRId64", %Q)",
+			             " ('%s$%X', '%s', '%s', '%s', %lu, %Q)",
 			             last_artistAlbumAll.parentID, last_artistAlbumAll.objectID, last_artistAlbumAll.parentID, refID, class, detailID, name);
 		}
 		if( genre )
 		{
 			if( !valid_cache || strcmp(genre, last_genre.name) != 0 )
 			{
-				insert_container(genre, MUSIC_GENRE_ID, NULL, "genre.musicGenre", NULL, NULL, NULL, &objectID, &parentID);
-				sprintf(last_genre.parentID, MUSIC_GENRE_ID"$%"PRIX64, parentID);
+				container = insert_container(genre, "1$5", NULL, "genre.musicGenre", NULL, NULL, NULL);
+				sprintf(last_genre.parentID, "1$5$%llX", container>>32);
 				strcpy(last_genre.name, genre);
 				last_genreArtist.name[0] = '\0';
 				/* Add this file to the "- All Artists -" container as well */
-				insert_container(_("- All Artists -"), last_genre.parentID, NULL, "person", NULL, genre, NULL, &objectID, &parentID);
-				sprintf(last_genreArtistAll.parentID, "%s$%"PRIX64, last_genre.parentID, parentID);
-				last_genreArtistAll.objectID = objectID;
+				container = insert_container("- All Artists -", last_genre.parentID, NULL, "storageFolder", NULL, genre, NULL);
+				sprintf(last_genreArtistAll.parentID, "%s$%llX", last_genre.parentID, container>>32);
+				last_genreArtistAll.objectID = (int)container;
 			}
 			else
 			{
 				last_genreArtistAll.objectID++;
 			}
-			if( valid_cache && strcmp(artist?artist:_("Unknown Artist"), last_genreArtist.name) == 0 )
+			if( valid_cache && strcmp(artist?artist:"Unknown Artist", last_genreArtist.name) == 0 )
 			{
 				last_genreArtist.objectID++;
 			}
 			else
 			{
-				insert_container(artist?artist:_("Unknown Artist"), last_genre.parentID, artist?last_artist.parentID:NULL,
-				                 "person.musicArtist", NULL, genre, NULL, &objectID, &parentID);
-				sprintf(last_genreArtist.parentID, "%s$%"PRIX64, last_genre.parentID, parentID);
-				last_genreArtist.objectID = objectID;
-				strcpy(last_genreArtist.name, artist?artist:_("Unknown Artist"));
+				container = insert_container(artist?artist:"Unknown Artist", last_genre.parentID, artist?last_artist.parentID:NULL, "person.musicArtist", NULL, genre, NULL);
+				sprintf(last_genreArtist.parentID, "%s$%llX", last_genre.parentID, container>>32);
+				last_genreArtist.objectID = (int)container;
+				strcpy(last_genreArtist.name, artist?artist:"Unknown Artist");
 				//DEBUG DPRINTF(E_DEBUG, L_SCANNER, "Creating cached genre/artist item: %s/%s/%X\n", last_genreArtist.name, last_genreArtist.parentID, last_genreArtist.objectID);
 			}
 			sql_exec(db, "INSERT into OBJECTS"
 			             " (OBJECT_ID, PARENT_ID, REF_ID, CLASS, DETAIL_ID, NAME) "
 			             "VALUES"
-			             " ('%s$%"PRIX64"', '%s', '%s', '%s', %"PRId64", %Q)",
+			             " ('%s$%X', '%s', '%s', '%s', %lu, %Q)",
 			             last_genreArtist.parentID, last_genreArtist.objectID, last_genreArtist.parentID, refID, class, detailID, name);
 			sql_exec(db, "INSERT into OBJECTS"
 			             " (OBJECT_ID, PARENT_ID, REF_ID, CLASS, DETAIL_ID, NAME) "
 			             "VALUES"
-			             " ('%s$%"PRIX64"', '%s', '%s', '%s', %"PRId64", %Q)",
+			             " ('%s$%X', '%s', '%s', '%s', %lu, %Q)",
 			             last_genreArtistAll.parentID, last_genreArtistAll.objectID, last_genreArtistAll.parentID, refID, class, detailID, name);
 		}
 		/* All Music */
 		if( !last_all_objectID )
 		{
-			last_all_objectID = get_next_available_id("OBJECTS", MUSIC_ALL_ID);
+			last_all_objectID = get_next_available_id("OBJECTS", "1$4");
 		}
 		sql_exec(db, "INSERT into OBJECTS"
 		             " (OBJECT_ID, PARENT_ID, REF_ID, CLASS, DETAIL_ID, NAME) "
 		             "VALUES"
-		             " ('"MUSIC_ALL_ID"$%"PRIX64"', '"MUSIC_ALL_ID"', '%s', '%s', %"PRId64", %Q)",
+		             " ('1$4$%llX', '1$4', '%s', '%s', %lu, %Q)",
 		             last_all_objectID++, refID, class, detailID, name);
 	}
 	else if( strstr(class, "videoItem") )
@@ -364,12 +368,12 @@ insert_containers(const char * name, const char *path, const char * refID, const
 		/* All Videos */
 		if( !last_all_objectID )
 		{
-			last_all_objectID = get_next_available_id("OBJECTS", VIDEO_ALL_ID);
+			last_all_objectID = get_next_available_id("OBJECTS", "2$8");
 		}
 		sql_exec(db, "INSERT into OBJECTS"
 		             " (OBJECT_ID, PARENT_ID, REF_ID, CLASS, DETAIL_ID, NAME) "
 		             "VALUES"
-		             " ('"VIDEO_ALL_ID"$%"PRIX64"', '"VIDEO_ALL_ID"', '%s', '%s', %"PRId64", %Q)",
+		             " ('2$8$%llX', '2$8', '%s', '%s', %lu, %Q)",
 		             last_all_objectID++, refID, class, detailID, name);
 		return;
 	}
@@ -384,14 +388,15 @@ insert_containers(const char * name, const char *path, const char * refID, const
 int
 insert_directory(const char * name, const char * path, const char * base, const char * parentID, int objectID)
 {
-	int found = 0;
+	char * sql;
+	int rows, found = 0;
 	sqlite_int64 detailID = 0;
 	char * refID = NULL;
 	char class[] = "container.storageFolder";
 	char * id_buf = NULL;
 	char * parent_buf = NULL;
-	char *dir_buf, *dir;
-	char *result, *p;
+	char **result;
+	char *dir = NULL, *pathdup;
 	static char last_found[256] = "-1";
 
 	if( strcmp(base, BROWSEDIR_ID) != 0 )
@@ -399,8 +404,8 @@ insert_directory(const char * name, const char * path, const char * base, const 
 
 	if( refID )
 	{
- 		dir_buf = strdup(path);
-		dir = dirname(dir_buf);
+ 		pathdup = strdup(path);
+		dir = dirname(pathdup);
 		asprintf(&id_buf, "%s%s$%X", base, parentID, objectID);
 		asprintf(&parent_buf, "%s%s", base, parentID);
 		while( !found )
@@ -413,29 +418,30 @@ insert_directory(const char * name, const char * path, const char * base, const 
 				break;
 			}
 			/* Does not exist.  Need to create, and may need to create parents also */
-			result = sql_get_text_field(db, "SELECT DETAIL_ID from OBJECTS where OBJECT_ID = '%s'", refID);
-			if( result )
+			sql = sqlite3_mprintf("SELECT DETAIL_ID from OBJECTS where OBJECT_ID = '%s'", refID);
+			if( (sql_get_table(db, sql, &result, &rows, NULL) == SQLITE_OK) && rows )
 			{
-				detailID = strtoll(result, NULL, 10);
-				sqlite3_free(result);
+				detailID = atoi(result[1]);
 			}
+			sqlite3_free_table(result);
+			sqlite3_free(sql);
 			sql_exec(db, "INSERT into OBJECTS"
 			             " (OBJECT_ID, PARENT_ID, REF_ID, DETAIL_ID, CLASS, NAME) "
 			             "VALUES"
-			             " ('%s', '%s', %Q, %"PRId64", '%s', '%q')",
-			             id_buf, parent_buf, refID, detailID, class, strrchr(dir, '/')+1);
-			if( (p = strrchr(id_buf, '$')) )
-				*p = '\0';
-			if( (p = strrchr(parent_buf, '$')) )
-				*p = '\0';
-			if( (p = strrchr(refID, '$')) )
-				*p = '\0';
+			             " ('%s', '%s', %Q, '%lld', '%s', '%q')",
+			             id_buf, parent_buf, refID, detailID, class, rindex(dir, '/')+1);
+			if( rindex(id_buf, '$') )
+				*rindex(id_buf, '$') = '\0';
+			if( rindex(parent_buf, '$') )
+				*rindex(parent_buf, '$') = '\0';
+			if( rindex(refID, '$') )
+				*rindex(refID, '$') = '\0';
 			dir = dirname(dir);
 		}
 		free(refID);
 		free(parent_buf);
 		free(id_buf);
-		free(dir_buf);
+		free(pathdup);
 		return 1;
 	}
 
@@ -443,7 +449,7 @@ insert_directory(const char * name, const char * path, const char * base, const 
 	sql_exec(db, "INSERT into OBJECTS"
 	             " (OBJECT_ID, PARENT_ID, REF_ID, DETAIL_ID, CLASS, NAME) "
 	             "VALUES"
-	             " ('%s%s$%X', '%s%s', %Q, %"PRId64", '%s', '%q')",
+	             " ('%s%s$%X', '%s%s', %Q, '%lld', '%s', '%q')",
 	             base, parentID, objectID, base, parentID, refID, detailID, class, name);
 	if( refID )
 		free(refID);
@@ -456,7 +462,7 @@ insert_file(char * name, const char * path, const char * parentID, int object)
 {
 	char class[32];
 	char objectID[64];
-	sqlite3_int64 detailID = 0;
+	unsigned long int detailID = 0;
 	char base[8];
 	char * typedir_parentID;
 	int typedir_objectID;
@@ -465,8 +471,6 @@ insert_file(char * name, const char * path, const char * parentID, int object)
 
 	if( is_image(name) )
 	{
-		if( is_album_art(name) )
-			return -1;
 		strcpy(base, IMAGE_DIR_ID);
 		strcpy(class, "item.imageItem.photo");
 		detailID = GetImageMetadata(path, name);
@@ -504,17 +508,17 @@ insert_file(char * name, const char * path, const char * parentID, int object)
 	sql_exec(db, "INSERT into OBJECTS"
 	             " (OBJECT_ID, PARENT_ID, CLASS, DETAIL_ID, NAME) "
 	             "VALUES"
-	             " ('%s', '%s%s', '%s', %"PRId64", '%q')",
+	             " ('%s', '%s%s', '%s', %lu, '%q')",
 	             objectID, BROWSEDIR_ID, parentID, class, detailID, name);
 
 	if( *parentID )
 	{
 		typedir_objectID = 0;
 		typedir_parentID = strdup(parentID);
-		baseid = strrchr(typedir_parentID, '$');
+		baseid = rindex(typedir_parentID, '$');
 		if( baseid )
 		{
-			typedir_objectID = strtol(baseid+1, NULL, 16);
+			sscanf(baseid+1, "%X", &typedir_objectID);
 			*baseid = '\0';
 		}
 		insert_directory(name, path, base, typedir_parentID, typedir_objectID);
@@ -523,7 +527,7 @@ insert_file(char * name, const char * path, const char * parentID, int object)
 	sql_exec(db, "INSERT into OBJECTS"
 	             " (OBJECT_ID, PARENT_ID, REF_ID, CLASS, DETAIL_ID, NAME) "
 	             "VALUES"
-	             " ('%s%s$%X', '%s%s', '%s', '%s', %"PRId64", '%q')",
+	             " ('%s%s$%X', '%s%s', '%s', '%s', %lu, '%q')",
 	             base, parentID, object, base, parentID, objectID, class, detailID, name);
 
 	insert_containers(name, path, objectID, class, detailID);
@@ -534,27 +538,24 @@ int
 CreateDatabase(void)
 {
 	int ret, i;
-	const char * containers[] = { "0","-1",   "root",
-	                         MUSIC_ID, "0", _("Music"),
-	                     MUSIC_ALL_ID, MUSIC_ID, _("All Music"),
-	                   MUSIC_GENRE_ID, MUSIC_ID, _("Genre"),
-	                  MUSIC_ARTIST_ID, MUSIC_ID, _("Artist"),
-	                   MUSIC_ALBUM_ID, MUSIC_ID, _("Album"),
-	                     MUSIC_DIR_ID, MUSIC_ID, _("Folders"),
-	                   MUSIC_PLIST_ID, MUSIC_ID, _("Playlists"),
-
-	                         VIDEO_ID, "0", _("Video"),
-	                     VIDEO_ALL_ID, VIDEO_ID, _("All Video"),
-	                     VIDEO_DIR_ID, VIDEO_ID, _("Folders"),
-
-	                         IMAGE_ID, "0", _("Pictures"),
-	                     IMAGE_ALL_ID, IMAGE_ID, _("All Pictures"),
-	                    IMAGE_DATE_ID, IMAGE_ID, _("Date Taken"),
-	                  IMAGE_CAMERA_ID, IMAGE_ID, _("Camera"),
-	                     IMAGE_DIR_ID, IMAGE_ID, _("Folders"),
-
-	                     BROWSEDIR_ID, "0", _("Browse Folders"),
-			0 };
+	const char * containers[] = {      "0","-1", "root",
+					   "1", "0", "Music",
+					 "1$4", "1", "All Music",
+					 "1$5", "1", "Genre",
+					 "1$6", "1", "Artist",
+					 "1$7", "1", "Album",
+				  MUSIC_DIR_ID, "1", "Folders",
+				MUSIC_PLIST_ID, "1", "Playlists",
+					   "2", "0", "Video",
+					 "2$8", "2", "All Video",
+				  VIDEO_DIR_ID, "2", "Folders",
+					   "3", "0", "Pictures",
+					"3$11", "3", "All Pictures",
+					"3$12", "3", "Date Taken",
+					"3$13", "3", "Camera",
+				  IMAGE_DIR_ID, "3", "Folders",
+					  "64", "0", "Browse Folders",
+					0 };
 
 	ret = sql_exec(db, "CREATE TABLE OBJECTS ( "
 					"ID INTEGER PRIMARY KEY AUTOINCREMENT, "
@@ -627,7 +628,7 @@ CreateDatabase(void)
 	{
 		ret = sql_exec(db, "INSERT into OBJECTS (OBJECT_ID, PARENT_ID, DETAIL_ID, CLASS, NAME)"
 		                   " values "
-		                   "('%s', '%s', %lld, 'container.storageFolder', '%q')",
+		                   "('%s', '%s', %lld, 'container.storageFolder', '%s')",
 		                   containers[i], containers[i+1], GetFolderMetadata(containers[i+2], NULL, NULL, NULL, NULL), containers[i+2]);
 		if( ret != SQLITE_OK )
 			goto sql_failed;
@@ -716,7 +717,7 @@ ScanDirectory(const char * dir, const char * parent, enum media_types dir_type)
 	if( chdir(dir) != 0 )
 		return;
 
-	DPRINTF(parent?E_INFO:E_WARN, L_SCANNER, _("Scanning %s\n"), dir);
+	DPRINTF(parent?E_INFO:E_WARN, L_SCANNER, "Scanning %s\n", dir);
 	switch( dir_type )
 	{
 		case ALL_MEDIA:
@@ -747,13 +748,9 @@ ScanDirectory(const char * dir, const char * parent, enum media_types dir_type)
 
 	for (i=0; i < n; i++)
 	{
-#if !USE_FORK
-		if( quitting )
-			break;
-#endif
 		type = TYPE_UNKNOWN;
 		sprintf(full_path, "%s/%s", dir, namelist[i]->d_name);
-		name = escape_tag(namelist[i]->d_name, 1);
+		name = escape_tag(namelist[i]->d_name);
 		if( namelist[i]->d_type == DT_DIR )
 		{
 			type = TYPE_DIR;
@@ -766,18 +763,19 @@ ScanDirectory(const char * dir, const char * parent, enum media_types dir_type)
 		{
 			type = resolve_unknown_type(full_path, dir_type);
 		}
-		if( (type == TYPE_DIR) && (access(full_path, R_OK|X_OK) == 0) )
+		if( type == TYPE_DIR )
 		{
-			insert_directory(name, full_path, BROWSEDIR_ID, (parent ? parent:""), i+startID);
+			insert_directory(name?name:namelist[i]->d_name, full_path, BROWSEDIR_ID, (parent ? parent:""), i+startID);
 			sprintf(parent_id, "%s$%X", (parent ? parent:""), i+startID);
 			ScanDirectory(full_path, parent_id, dir_type);
 		}
 		else if( type == TYPE_FILE )
 		{
-			if( insert_file(name, full_path, (parent ? parent:""), i+startID) == 0 )
+			if( insert_file(name?name:namelist[i]->d_name, full_path, (parent ? parent:""), i+startID) == 0 )
 				fileno++;
 		}
-		free(name);
+		if( name )
+			free(name);
 		free(namelist[i]);
 	}
 	free(namelist);
@@ -787,7 +785,7 @@ ScanDirectory(const char * dir, const char * parent, enum media_types dir_type)
 	}
 	else
 	{
-		DPRINTF(E_WARN, L_SCANNER, _("Scanning %s finished (%llu files)!\n"), dir, fileno);
+		DPRINTF(E_WARN, L_SCANNER, "Scanning %s finished (%llu files)!\n", dir, fileno);
 	}
 }
 
@@ -803,15 +801,15 @@ start_scanner()
 	FILE * flag = fopen("/ramfs/.upnp-av_scan", "w");
 	if( flag )
 		fclose(flag);
-#endif
 	freopen("/dev/null", "a", stderr);
+#endif
 	while( media_path )
 	{
 		ScanDirectory(media_path->path, NULL, media_path->type);
 		media_path = media_path->next;
 	}
-	freopen("/proc/self/fd/2", "a", stderr);
 #ifdef READYNAS
+	freopen("/proc/self/fd/2", "a", stderr);
 	if( access("/ramfs/.rescan_done", F_OK) == 0 )
 		system("/bin/sh /ramfs/.rescan_done");
 	unlink("/ramfs/.upnp-av_scan");

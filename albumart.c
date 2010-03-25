@@ -1,19 +1,19 @@
-/* MiniDLNA media server
- * Copyright (C) 2008  Justin Maggard
+/*  MiniDLNA media server
+ *  Copyright (C) 2008  Justin Maggard
  *
- * This file is part of MiniDLNA.
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
  *
- * MiniDLNA is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
  *
- * MiniDLNA is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with MiniDLNA. If not, see <http://www.gnu.org/licenses/>.
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,9 +21,13 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/param.h>
 #include <libgen.h>
 #include <setjmp.h>
 #include <errno.h>
+#if defined(__APPLE__) || defined(BSD)
+#include <sys/syslimits.h>
+#endif
 
 #include <jpeglib.h>
 
@@ -37,17 +41,21 @@
 int
 art_cache_exists(const char * orig_path, char ** cache_file)
 {
-	asprintf(cache_file, "%s/art_cache%s", db_path, orig_path);
+	if( asprintf(cache_file, "%s/art_cache%s", db_path, orig_path) == -1 )
+	{
+		DPRINTF(E_DEBUG, L_METADATA, "asprintf error :: error no. %d [%s]\n", errno, strerror(errno));
+		return -1;
+	}
 	strcpy(strchr(*cache_file, '\0')-4, ".jpg");
 
 	return (!access(*cache_file, F_OK));
 }
 
 char *
-save_resized_album_art(image_s * imsrc, const char * path)
+save_resized_album_art(image * imsrc, const char * path)
 {
 	int dstw, dsth;
-	image_s * imdst;
+	image * imdst;
 	char * cache_file;
 	char * cache_dir;
 
@@ -103,12 +111,12 @@ unsigned int DJBHash(const char * str, int len)
 void
 update_if_album_art(const char * path)
 {
-	char * dir;
-	char * match = NULL;
-	char * file = NULL;
+	char *match = NULL;
+	char *file = NULL;
+	char *dir, *pathdup;
 	int ncmp = 0;
-	int album_art;
-	DIR * dh;
+	struct album_art_name_s *album_art_name;
+	DIR *dh;
 	struct dirent *dp;
 	enum file_types type = TYPE_UNKNOWN;
 	sqlite_int64 art_id = 0;
@@ -121,12 +129,17 @@ update_if_album_art(const char * path)
 	}
 	else
 	{
-		ncmp = strrchr(match, '.') - match;
+		ncmp = strrchr(match, '.')-match;
 	}
 	/* Check if this file name matches one of the default album art names */
-	album_art = is_album_art(match);
+	for( album_art_name = album_art_names; album_art_name; album_art_name = album_art_name->next )
+	{
+		if( strcmp(album_art_name->name, match) == 0 )
+			break;
+	}
 
-	dir = dirname(strdup(path));
+	pathdup = strdup(path);
+	dir = dirname(pathdup);
 	dh = opendir(dir);
 	if( !dh )
 		return;
@@ -139,7 +152,11 @@ update_if_album_art(const char * path)
 				break;
 			case DT_LNK:
 			case DT_UNKNOWN:
-				asprintf(&file, "%s/%s", dir, dp->d_name);
+				if( asprintf(&file, "%s/%s", dir, dp->d_name) == -1 )
+				{
+                                    DPRINTF(E_DEBUG, L_METADATA, "asprintf error :: error no. %d [%s]\n", errno, strerror(errno));
+                                    return;
+                                }
 				type = resolve_unknown_type(file, ALL_MEDIA);
 				free(file);
 				break;
@@ -151,10 +168,14 @@ update_if_album_art(const char * path)
 			continue;
 		if( (*(dp->d_name) != '.') &&
 		    (is_video(dp->d_name) || is_audio(dp->d_name)) &&
-		    (album_art || strncmp(dp->d_name, match, ncmp) == 0) )
+		    (album_art_name || strncmp(dp->d_name, match, ncmp) == 0) )
 		{
 			DPRINTF(E_DEBUG, L_METADATA, "New file %s looks like cover art for %s\n", path, dp->d_name);
-			asprintf(&file, "%s/%s", dir, dp->d_name);
+			if( asprintf(&file, "%s/%s", dir, dp->d_name) == -1 )
+			{
+				DPRINTF(E_DEBUG, L_METADATA, "asprintf error :: error no. %d [%s]\n", errno, strerror(errno));
+				return;
+                        }
 			art_id = find_album_art(file, NULL, 0);
 			if( sql_exec(db, "UPDATE DETAILS set ALBUM_ART = %lld where PATH = '%q'", art_id, file) != SQLITE_OK )
 				DPRINTF(E_WARN, L_METADATA, "Error setting %s as cover art for %s\n", match, dp->d_name);
@@ -163,7 +184,7 @@ update_if_album_art(const char * path)
 	}
 	closedir(dh);
 	
-	free(dir);
+	free(pathdup);
 	free(match);
 }
 
@@ -174,7 +195,8 @@ check_embedded_art(const char * path, const char * image_data, int image_size)
 	char * art_path = NULL;
 	char * cache_dir;
 	FILE * dstfile;
-	image_s * imsrc;
+	image * imsrc;
+	size_t nwritten;
 	static char last_path[PATH_MAX];
 	static unsigned int last_hash = 0;
 	static int last_success = 0;
@@ -213,7 +235,7 @@ check_embedded_art(const char * path, const char * image_data, int image_size)
 	}
 	last_hash = hash;
 
-	imsrc = image_new_from_jpeg(NULL, 0, image_data, image_size, 1);
+	imsrc = image_new_from_jpeg(NULL, 0, image_data, image_size);
 	if( !imsrc )
 	{
 		last_success = 0;
@@ -228,7 +250,6 @@ check_embedded_art(const char * path, const char * image_data, int image_size)
 	}
 	else if( width > 0 && height > 0 )
 	{
-		size_t nwritten;
 		if( art_cache_exists(path, &art_path) )
 			goto end_art;
 		cache_dir = strdup(art_path);
@@ -241,11 +262,10 @@ check_embedded_art(const char * path, const char * image_data, int image_size)
 			art_path = NULL;
 			goto end_art;
 		}
-		nwritten = fwrite((void *)image_data, 1, image_size, dstfile);
+		nwritten = fwrite((void *)image_data, image_size, 1, dstfile);
 		fclose(dstfile);
 		if( nwritten != image_size )
 		{
-			DPRINTF(E_WARN, L_METADATA, "Embedded art error: wrote %d/%d bytes\n", nwritten, image_size);
 			remove(art_path);
 			free(art_path);
 			art_path = NULL;
@@ -272,7 +292,7 @@ check_for_album_file(char * dir, const char * path)
 {
 	char * file = malloc(PATH_MAX);
 	struct album_art_name_s * album_art_name;
-	image_s * imsrc = NULL;
+	image * imsrc = NULL;
 	int width=0, height=0;
 	char * art_file;
 
@@ -283,7 +303,7 @@ check_for_album_file(char * dir, const char * path)
 		if( art_cache_exists(file, &art_file) )
 			goto existing_file;
 		free(art_file);
-		imsrc = image_new_from_jpeg(file, 1, NULL, 0, 1);
+		imsrc = image_new_from_jpeg(file, 1, NULL, 0);
 		if( imsrc )
 			goto found_file;
 	}
@@ -295,7 +315,7 @@ check_for_album_file(char * dir, const char * path)
 		if( art_cache_exists(file, &art_file) )
 			goto existing_file;
 		free(art_file);
-		imsrc = image_new_from_jpeg(file, 1, NULL, 0, 1);
+		imsrc = image_new_from_jpeg(file, 1, NULL, 0);
 		if( imsrc )
 			goto found_file;
 	}
@@ -313,7 +333,7 @@ existing_file:
 				return art_file;
 			}
 			free(art_file);
-			imsrc = image_new_from_jpeg(file, 1, NULL, 0, 1);
+			imsrc = image_new_from_jpeg(file, 1, NULL, 0);
 			if( !imsrc )
 				continue;
 found_file:

@@ -1,19 +1,19 @@
-/* MiniDLNA media server
- * Copyright (C) 2009  Justin Maggard
+/*  MiniDLNA media server
+ *  Copyright (C) 2009  Justin Maggard
  *
- * This file is part of MiniDLNA.
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
  *
- * MiniDLNA is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
  *
- * MiniDLNA is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with MiniDLNA. If not, see <http://www.gnu.org/licenses/>.
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
 /* These functions are mostly based on code from other projects.
@@ -33,7 +33,11 @@
 #include <sys/types.h>
 #include <setjmp.h>
 #include <jpeglib.h>
+#if defined(__APPLE__) || defined(BSD)
+#include <machine/endian.h>
+#else
 #include <endian.h>
+#endif
 
 #include "upnpreplyparse.h"
 #include "image_utils.h"
@@ -203,14 +207,14 @@ libjpeg_error_handler(j_common_ptr cinfo)
 }
 
 void
-image_free(image_s *pimage)
+image_free(image *pimage)
 {
 	free(pimage->buf);
 	free(pimage);
 }
 
 pix
-get_pix(image_s *pimage, int32_t x, int32_t y)
+get_pix(image *pimage, int32_t x, int32_t y)
 {
 	if((x >= 0) && (y >= 0) && (x < pimage->width) && (y < pimage->height))
 	{
@@ -224,7 +228,7 @@ get_pix(image_s *pimage, int32_t x, int32_t y)
 }
 
 void
-put_pix_alpha_replace(image_s *pimage, int32_t x, int32_t y, pix col)
+put_pix_alpha_replace(image *pimage, int32_t x, int32_t y, pix col)
 {
 	if((x >= 0) && (y >= 0) && (x < pimage->width) && (y < pimage->height))
 		pimage->buf[(y * pimage->width) + x] = col;
@@ -237,16 +241,10 @@ image_get_jpeg_resolution(const char * path, int * width, int * height)
 	unsigned char buf[8];
 	u_int16_t offset, h, w;
 	int ret = 1;
-	long size;
-	
 
 	img = fopen(path, "r");
 	if( !img )
 		return(-1);
-
-	fseek(img, 0, SEEK_END);
-	size = ftell(img);
-	rewind(img);
 
 	fread(&buf, 2, 1, img);
 	if( (buf[0] != 0xFF) || (buf[1] != 0xD8) )
@@ -256,7 +254,7 @@ image_get_jpeg_resolution(const char * path, int * width, int * height)
 	}
 	memset(&buf, 0, sizeof(buf));
 
-	while( ftell(img) < size )
+	while( !feof(img) )
 	{
 		while( buf[0] != 0xFF && !feof(img) )
 			fread(&buf, 1, 1, img);
@@ -282,8 +280,7 @@ image_get_jpeg_resolution(const char * path, int * width, int * height)
 			fread(&buf, 2, 1, img);
 			memcpy(&offset, buf, 2);
 			offset = SWAP16(offset) - 2;
-			if( fseek(img, offset, SEEK_CUR) == -1 )
-				break;
+			fseek(img, offset, SEEK_CUR);
 		}
 	}
 	fclose(img);
@@ -295,7 +292,7 @@ image_get_jpeg_date_xmp(const char * path, char ** date)
 {
 	FILE *img;
 	unsigned char buf[8];
-	char *data = NULL, *newdata;
+	char *data = NULL;
 	u_int16_t offset;
 	struct NameValueParserData xml;
 	char * exif;
@@ -337,11 +334,7 @@ image_get_jpeg_date_xmp(const char * path, char ** date)
 				continue;
 			}
 
-			newdata = realloc(data, 30);
-			if( !newdata )
-				break;
-			data = newdata;
-
+			data = realloc(data, 30);
 			fread(data, 29, 1, img);
 			offset -= 29;
 			if( strcmp(data, "http://ns.adobe.com/xap/1.0/") != 0 )
@@ -350,19 +343,13 @@ image_get_jpeg_date_xmp(const char * path, char ** date)
 				continue;
 			}
 
-			newdata = realloc(data, offset+1);
-			if( !newdata )
-				break;
-			data = newdata;
+			data = realloc(data, offset+1);
 			fread(data, offset, 1, img);
 
 			ParseNameValue(data, offset, &xml);
 			exif = GetValueFromNameValueList(&xml, "DateTimeOriginal");
 			if( !exif )
-			{
-				ClearNameValueList(&xml);
 				break;
-			}
 			*date = realloc(*date, strlen(exif)+1);
 			strcpy(*date, exif);
 			ClearNameValueList(&xml);
@@ -385,12 +372,12 @@ image_get_jpeg_date_xmp(const char * path, char ** date)
 	return ret;
 }
 
-image_s *
+image *
 image_new(int32_t width, int32_t height)
 {
-	image_s *vimage;
+	image *vimage;
 
-	if((vimage = (image_s *)malloc(sizeof(image_s))) == NULL)
+	if((vimage = (image *)malloc(sizeof(image))) == NULL)
 	{
 		DPRINTF(E_WARN, L_METADATA, "malloc failed\n");
 		return NULL;
@@ -406,10 +393,10 @@ image_new(int32_t width, int32_t height)
 	return(vimage);
 }
 
-image_s *
-image_new_from_jpeg(const char * path, int is_file, const char * buf, int size, int scale)
+image *
+image_new_from_jpeg(const char * path, int is_file, const char * buf, int size)
 {
-	image_s *vimage;
+	image *vimage;
 	FILE  *file = NULL;
 	struct jpeg_decompress_struct cinfo;
 	unsigned char *line[16], *ptr;
@@ -441,7 +428,6 @@ image_new_from_jpeg(const char * path, int is_file, const char * buf, int size, 
 		return NULL;
 	}
 	jpeg_read_header(&cinfo, TRUE);
-	cinfo.scale_denom = scale;
 	cinfo.do_fancy_upsampling = FALSE;
 	cinfo.do_block_smoothing = FALSE;
 	jpeg_start_decompress(&cinfo);
@@ -482,12 +468,9 @@ image_new_from_jpeg(const char * path, int is_file, const char * buf, int size, 
 	if(cinfo.output_components == 3)
 	{
 		ofs = 0;
-		if((ptr = (unsigned char *)malloc(w * 3 * cinfo.rec_outbuf_height + 8)) == NULL)
+		if((ptr = (unsigned char *)malloc(w * 3 * cinfo.rec_outbuf_height)) == NULL)
 		{
 			DPRINTF(E_WARN, L_METADATA, "malloc failed\n");
-			image_free(vimage);
-			if( is_file )
-				fclose(file);
 			return NULL;
 		}
 
@@ -551,7 +534,7 @@ image_new_from_jpeg(const char * path, int is_file, const char * buf, int size, 
 }
 
 void
-image_upsize(image_s * pdest, image_s * psrc, int32_t width, int32_t height)
+image_upsize(image * pdest, image * psrc, int32_t width, int32_t height)
 {
 	int32_t vx, vy;
 #if !defined __i386__ && !defined __x86_64__
@@ -614,7 +597,7 @@ image_upsize(image_s * pdest, image_s * psrc, int32_t width, int32_t height)
 }
 
 void
-image_downsize(image_s * pdest, image_s * psrc, int32_t width, int32_t height)
+image_downsize(image * pdest, image * psrc, int32_t width, int32_t height)
 {
 	int32_t vx, vy;
 	pix vcol;
@@ -757,10 +740,10 @@ image_downsize(image_s * pdest, image_s * psrc, int32_t width, int32_t height)
 	}
 }
 
-image_s *
-image_resize(image_s * src_image, int32_t width, int32_t height)
+image *
+image_resize(image * src_image, int32_t width, int32_t height)
 {
-	image_s * dst_image;
+	image * dst_image;
 
 	dst_image = image_new(width, height);
 	if( !dst_image )
@@ -775,7 +758,7 @@ image_resize(image_s * src_image, int32_t width, int32_t height)
 
 
 unsigned char *
-image_save_to_jpeg_buf(image_s * pimage, int * size)
+image_save_to_jpeg_buf(image * pimage, int * size)
 {
 	struct jpeg_compress_struct cinfo;
 	struct jpeg_error_mgr jerr;
@@ -823,7 +806,7 @@ image_save_to_jpeg_buf(image_s * pimage, int * size)
 }
 
 int
-image_save_to_jpeg_file(image_s * pimage, const char * path)
+image_save_to_jpeg_file(image * pimage, const char * path)
 {
 	int nwritten, size = 0;
 	unsigned char * buf;

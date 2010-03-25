@@ -1,10 +1,10 @@
-# $Id: Makefile,v 1.31 2011/04/21 08:50:44 jmaggard Exp $
+# $Id$
 # MiniDLNA project
 # http://sourceforge.net/projects/minidlna/
 # (c) 2008-2009 Justin Maggard
 # for use with GNU Make
 # To install use :
-# $ DESTDIR=/dummyinstalldir make install
+# $ PREFIX=/dummyinstalldir make install
 # or :
 # $ INSTALLPREFIX=/usr/local make install
 # or :
@@ -12,19 +12,24 @@
 #
 #CFLAGS = -Wall -O -D_GNU_SOURCE -g -DDEBUG
 #CFLAGS = -Wall -g -Os -D_GNU_SOURCE
+MAC_INCLUDES=/opt/local/include
+LINUX_INCLUDES=/usr/include
+EXT_INCLUDES=$(LINUX_INCLUDES)
+#EXT_INCLUDES=$(MAC_INCLUDES)
+MAC_LIB_FLAGS=-L/opt/local/lib
+LINUX_LIB_FLAGS=
+LIB_FLAGS=$(MAC_LIB_FLAGS)
 CFLAGS = -Wall -g -O3 -D_GNU_SOURCE -D_FILE_OFFSET_BITS=64 \
-	 -I/usr/include/ffmpeg \
-	 -I/usr/include/libavutil -I/usr/include/libavcodec -I/usr/include/libavformat \
-	 -I/usr/include/ffmpeg/libavutil -I/usr/include/ffmpeg/libavcodec -I/usr/include/ffmpeg/libavformat
-#STATIC_LINKING: CFLAGS += -DSTATIC
+	 -I$(EXT_INCLUDES) -I$(EXT_INCLUDES)/libavutil -I$(EXT_INCLUDES)/libavcodec -I$(EXT_INCLUDES)/libavformat \
+	 -I$(EXT_INCLUDES)/ffmpeg/libavutil -I$(EXT_INCLUDES)/ffmpeg/libavcodec -I$(EXT_INCLUDES)/ffmpeg/libavformat
 #STATIC_LINKING: LDFLAGS = -static
 CC = gcc
 RM = rm -f
 INSTALL = install
 
-INSTALLPREFIX ?= $(DESTDIR)/usr
+INSTALLPREFIX ?= $(PREFIX)/usr
 SBININSTALLDIR = $(INSTALLPREFIX)/sbin
-ETCINSTALLDIR = $(DESTDIR)/etc
+ETCINSTALLDIR = $(PREFIX)/etc
 
 BASEOBJS = minidlna.o upnphttp.o upnpdescgen.o upnpsoap.o \
            upnpreplyparse.o minixml.o \
@@ -37,14 +42,14 @@ BASEOBJS = minidlna.o upnphttp.o upnpdescgen.o upnpsoap.o \
 
 ALLOBJS = $(BASEOBJS) $(LNXOBJS)
 
-LIBS = -lpthread -lexif -ljpeg -lsqlite3 -lavformat -lavutil -lavcodec -lid3tag -lFLAC -logg -lvorbis
+LIBS = $(LIB_FLAGS) -lpthread -lexif -ljpeg -lsqlite3 -lavformat -lid3tag -lFLAC -lvorbis -logg
 #STATIC_LINKING: LIBS = -lvorbis -logg -lm -lsqlite3 -lpthread -lexif -ljpeg -lFLAC -lm -lid3tag -lz -lavformat -lavutil -lavcodec -lm
 
 TESTUPNPDESCGENOBJS = testupnpdescgen.o upnpdescgen.o
 
 EXECUTABLES = minidlna testupnpdescgen
 
-.PHONY:	all clean distclean install depend
+.PHONY:	all clean install depend
 
 all:	$(EXECUTABLES)
 
@@ -53,16 +58,13 @@ clean:
 	$(RM) $(EXECUTABLES)
 	$(RM) testupnpdescgen.o
 
-distclean: clean
-	$(RM) config.h
-
 install:	minidlna
 	$(INSTALL) -d $(SBININSTALLDIR)
 	$(INSTALL) minidlna $(SBININSTALLDIR)
 	$(INSTALL) -d $(ETCINSTALLDIR)
 	$(INSTALL) --mode=0644 minidlna.conf $(ETCINSTALLDIR)
 
-minidlna:	$(BASEOBJS) $(LNXOBJS) $(LIBS)
+minidlna:	$(BASEOBJS) $(LNXOBJS)
 	@echo Linking $@
 	@$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $(BASEOBJS) $(LNXOBJS) $(LIBS)
 
@@ -118,7 +120,7 @@ inotify.o: inotify.h playlist.h
 image_utils.o: image_utils.h
 tivo_utils.o: config.h tivo_utils.h
 tivo_beacon.o: config.h tivo_beacon.h tivo_utils.h
-tivo_commands.o: config.h tivo_commands.h tivo_utils.h utils.h
+tivo_commands.o: config.h tivo_commands.h tivo_utils.h
 utils.o: utils.h
 sql.o: sql.h
 log.o: log.h
