@@ -15,6 +15,7 @@
  *  along with this program; if not, write to the Free Software
  *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <ctype.h>
 #include <string.h>
@@ -175,9 +176,12 @@ make_dir(char * path, mode_t mode)
 	do {
 		c = 0;
 
+		/* Before we do anything, skip leading /'s, so we don't bother
+		 * trying to create /. */
+		while (*s == '/')
+			++s;
+
 		/* Bypass leading non-'/'s and then subsequent '/'s. */
-		/* mls - broken on OSX */
-#ifndef __APPLE__
 		while (*s) {
 			if (*s == '/') {
 				do {
@@ -189,7 +193,6 @@ make_dir(char * path, mode_t mode)
 			}
 			++s;
 		}
-#endif
 
 		if (mkdir(path, mode) < 0) {
 			/* If we failed for any other reason than the directory
