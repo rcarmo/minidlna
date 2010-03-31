@@ -8,6 +8,8 @@
  * Portions of the code (c) Thomas Bernard, subject to
  * the conditions detailed in the LICENSE.miniupnpd file.
  */
+#include "config.h"
+
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
@@ -27,9 +29,6 @@
 #include <errno.h>
 #include <pthread.h>
 #include <pwd.h>
-
-/* unix sockets */
-#include "config.h"
 
 #include "upnpglobalvars.h"
 #include "sql.h"

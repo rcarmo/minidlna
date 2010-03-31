@@ -15,6 +15,8 @@
  *  along with this program; if not, write to the Free Software
  *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
+#include "config.h"
+
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -28,6 +30,9 @@
 #include <sys/param.h>
 #if defined(__APPLE__) || defined(BSD)
 #include <sys/syslimits.h>
+typedef struct dirent scan_filter;
+#else
+typedef const struct dirent scan_filter;
 #endif
 
 #include <sqlite3.h>
@@ -649,7 +654,7 @@ sql_failed:
 }
 
 int
-filter_audio(const struct dirent *d)
+filter_audio(scan_filter *d)
 {
 	return ( (*d->d_name != '.') &&
 	         ((d->d_type == DT_DIR) ||
@@ -663,7 +668,7 @@ filter_audio(const struct dirent *d)
 }
 
 int
-filter_video(const struct dirent *d)
+filter_video(scan_filter *d)
 {
 	return ( (*d->d_name != '.') &&
 	         ((d->d_type == DT_DIR) ||
@@ -675,7 +680,7 @@ filter_video(const struct dirent *d)
 }
 
 int
-filter_images(const struct dirent *d)
+filter_images(scan_filter *d)
 {
 	return ( (*d->d_name != '.') &&
 	         ((d->d_type == DT_DIR) ||
@@ -687,7 +692,7 @@ filter_images(const struct dirent *d)
 }
 
 int
-filter_media(const struct dirent *d)
+filter_media(scan_filter *d)
 {
 	return ( (*d->d_name != '.') &&
 	         ((d->d_type == DT_DIR) ||

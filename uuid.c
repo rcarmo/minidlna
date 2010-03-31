@@ -29,7 +29,9 @@
 #include "log.h"
 
 #define ETH_ALEN 6
+#ifndef NSEC_PER_SEC
 #define NSEC_PER_SEC 1000000000L
+#endif
 #define NSEC_PER_MSEC 1000000L
 
 static u_int32_t clock_seq;

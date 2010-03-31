@@ -1,4 +1,4 @@
 # all ports to be installed have names similiar to the libs they provide
 # exception: ffmpeg provides libav* stuff
-export CPPFLAGS="-I/usr/local/include -I/usr/local/include/libavutil -I/usr/local/include/libavformat -I/usr/local/include/libavcodec -DSIGCLD=SIGCHLD"
+export CPPFLAGS="-I/usr/local/include -I/usr/local/include/libavutil -I/usr/local/include/libavformat -I/usr/local/include/libavcodec"
 export LDFLAGS=-L/usr/local/lib

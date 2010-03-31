@@ -10,6 +10,8 @@
  * detailed in the LICENSE.miniupnpd file provided within
  * the distribution.
  */
+#include "config.h"
+
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -17,15 +19,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/param.h>
-
 #include <ctype.h>
-#include "config.h"
-#include "upnphttp.h"
-#include "upnpdescgen.h"
-#include "minidlnapath.h"
-#include "upnpsoap.h"
-#include "upnpevents.h"
-
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -37,13 +31,19 @@
 #include <sys/sendfile.h>
 #endif
 
+#include <libexif/exif-loader.h>
+
 #include "upnpglobalvars.h"
 #include "utils.h"
 #include "getifaddr.h"
 #include "image_utils.h"
 #include "log.h"
 #include "sql.h"
-#include <libexif/exif-loader.h>
+#include "upnphttp.h"
+#include "upnpdescgen.h"
+#include "minidlnapath.h"
+#include "upnpsoap.h"
+#include "upnpevents.h"
 #ifdef TIVO_SUPPORT
 #include "tivo_utils.h"
 #include "tivo_commands.h"

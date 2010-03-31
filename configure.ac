@@ -24,6 +24,9 @@ AC_CHECK_LIB([ogg], [main],, AC_MSG_ERROR(Cannot find required library ogg.))
 AC_CHECK_LIB([sqlite3], [main],, AC_MSG_ERROR(Cannot find required library sqlite3.))
 AC_CHECK_LIB([vorbis], [main],, AC_MSG_ERROR(Cannot find required library vorbis.))
 
+AC_USE_SYSTEM_EXTENSIONS
+AC_SYS_LARGEFILE
+
 # Checks for header files.
 AC_CHECK_HEADERS([arpa/inet.h fcntl.h locale.h netdb.h netinet/in.h stddef.h stdlib.h string.h sys/file.h sys/ioctl.h sys/param.h sys/socket.h sys/time.h unistd.h])
 
@@ -31,7 +34,7 @@ AC_CHECK_HEADER(avutil.h,, AC_MSG_ERROR(Cannot find required header file avutil.
 AC_CHECK_HEADER(avcodec.h,, AC_MSG_ERROR(Cannot find required header file avcodec.h.))
 AC_CHECK_HEADER(avformat.h,, AC_MSG_ERROR(Cannot find required header file avformat.h.))
 
-AC_CHECK_HEADERS([linux/types.h])
+AC_CHECK_HEADERS_ONCE([linux/types.h])
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_C_INLINE
@@ -54,6 +57,8 @@ AC_FUNC_REALLOC
 AC_CHECK_FUNCS([dup2 gethostname gettimeofday inet_ntoa memmove memset mkdir realpath select setlocale socket strcasecmp strchr strdup strerror strncasecmp strpbrk strrchr strstr strtol strtoul])
 
 #AC_ARG_ENABLE (feature, help-string, [action-if-given], [action-if-not-given])
+
+DB_PATH="/tmp/minidlna"
 
 OS_NAME=`uname -s`
 OS_VERSION=`uname -r`
@@ -104,6 +109,7 @@ case $OS_NAME in
                 KERNVERC=`echo $OS_VERSION | awk -F. '{print $3}'`
                 KERNVERD=`echo $OS_VERSION | awk -F. '{print $4}'`
                 #echo "$KERNVERA.$KERNVERB.$KERNVERC.$KERNVERD"
+		AC_DEFINE(USE_INOTIFY,, [Have Linux inotify support])
                 # NETGEAR ReadyNAS special case
                 if [[ -f /etc/raidiator_version ]]; then
                         OS_NAME=$(awk -F'!!|=' '{ print $1 }' /etc/raidiator_version)

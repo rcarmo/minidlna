@@ -22,7 +22,6 @@
 #endif
 
 #if defined(BSD) || defined(__APPLE__)
-#define AF_LINK AF_PACKET
 #include <netinet/in.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -161,7 +160,7 @@ getsyshwaddr(char * buf, int len)
 			if (p->ifa_addr->sa_family == AF_LINK)
 			{
 				ifname = p->ifa_name;
-				addr_in = (struct sockaddr_in *)ifnr->ifa_addr;
+				addr_in = (struct sockaddr_in *)p->ifa_addr;
 				a = (htonl(addr_in->sin_addr.s_addr) >> 0x18) & 0xFF;
 				if( a == 127)
 					continue;

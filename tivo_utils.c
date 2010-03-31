@@ -1,24 +1,23 @@
-/* MiniDLNA media server
- * Copyright (C) 2009  Justin Maggard
+/*  MiniDLNA media server
+ *  Copyright (C) 2009  Justin Maggard
  *
- * This file is part of MiniDLNA.
+ *  This program is free software; you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation; either version 2 of the License, or
+ *  (at your option) any later version.
  *
- * MiniDLNA is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
+ *  This program is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
  *
- * MiniDLNA is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with MiniDLNA. If not, see <http://www.gnu.org/licenses/>.
+ *  You should have received a copy of the GNU General Public License
+ *  along with this program; if not, write to the Free Software
+ *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 #include "config.h"
 #ifdef TIVO_SUPPORT
 #include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
 #include <ctype.h>
 #include <sqlite3.h>
@@ -74,8 +73,6 @@ decodeString(char * string, int inplace)
 	}
 	if( inplace )
 	{
-		if( ns )
-			free(ns);
 		return string;
 	}
 	else
@@ -87,58 +84,55 @@ decodeString(char * string, int inplace)
 
 /* These next functions implement a repeatable random function with a user-provided seed */
 static int
-seedRandomByte(uint32_t seed)
-{
-	unsigned char t;
+seedRandomByte(uint32_t seed) {
+  unsigned char t;
+  if( !sqlite3Prng.isInit )
+  {
+    int i;
+    char k[256];
+    sqlite3Prng.j = 0;
+    sqlite3Prng.i = 0;
+    memset(&k, 0, 256);
+    memcpy(&k, &seed, 4);
+    for(i=0; i<256; i++){
+      sqlite3Prng.s[i] = i;
+    }
+    for(i=0; i<256; i++){
+      sqlite3Prng.j += sqlite3Prng.s[i] + k[i];
+      t = sqlite3Prng.s[sqlite3Prng.j];
+      sqlite3Prng.s[sqlite3Prng.j] = sqlite3Prng.s[i];
+      sqlite3Prng.s[i] = t;
+    }
+    sqlite3Prng.isInit = 1;
+  }
+  /* Generate and return single random byte */
+  sqlite3Prng.i++;
+  t = sqlite3Prng.s[sqlite3Prng.i];
+  sqlite3Prng.j += t;
+  sqlite3Prng.s[sqlite3Prng.i] = sqlite3Prng.s[sqlite3Prng.j];
+  sqlite3Prng.s[sqlite3Prng.j] = t;
+  t += sqlite3Prng.s[sqlite3Prng.i];
 
-	if( !sqlite3Prng.isInit )
-	{
-		int i;
-		char k[256];
-		sqlite3Prng.j = 0;
-		sqlite3Prng.i = 0;
-		memset(&k, '\0', sizeof(k));
-		memcpy(&k, &seed, 4);
-		for(i=0; i<256; i++)
-			sqlite3Prng.s[i] = i;
-		for(i=0; i<256; i++)
-		{
-			sqlite3Prng.j += sqlite3Prng.s[i] + k[i];
-			t = sqlite3Prng.s[sqlite3Prng.j];
-			sqlite3Prng.s[sqlite3Prng.j] = sqlite3Prng.s[i];
-			sqlite3Prng.s[i] = t;
-		}
-		sqlite3Prng.isInit = 1;
-	}
-	/* Generate and return single random byte */
-	sqlite3Prng.i++;
-	t = sqlite3Prng.s[sqlite3Prng.i];
-	sqlite3Prng.j += t;
-	sqlite3Prng.s[sqlite3Prng.i] = sqlite3Prng.s[sqlite3Prng.j];
-	sqlite3Prng.s[sqlite3Prng.j] = t;
-	t += sqlite3Prng.s[sqlite3Prng.i];
-
-	return sqlite3Prng.s[t];
+  return sqlite3Prng.s[t];
 }
 
 void
-seedRandomness(int n, void *pbuf, uint32_t seed)
-{
-	unsigned char *zbuf = pbuf;
+seedRandomness(int N, void *pBuf, uint32_t seed){
+  unsigned char *zBuf = pBuf;
 
-	while( n-- )
-		*(zbuf++) = seedRandomByte(seed);
+  while( N-- ){
+    *(zBuf++) = seedRandomByte(seed);
+  }
 }
 
 void
 TiVoRandomSeedFunc(sqlite3_context *context, int argc, sqlite3_value **argv)
 {
-	sqlite_int64 r, seed;
-
-	if( argc != 1 || sqlite3_value_type(argv[0]) != SQLITE_INTEGER )
-		return;
-	seed = sqlite3_value_int64(argv[0]);
-	seedRandomness(sizeof(r), &r, seed);
-	sqlite3_result_int64(context, r);
+  sqlite_int64 r, seed;
+  if( argc != 1 || sqlite3_value_type(argv[0]) != SQLITE_INTEGER )
+	return;
+  seed = sqlite3_value_int64(argv[0]);
+  seedRandomness(sizeof(r), &r, seed);
+  sqlite3_result_int64(context, r);
 }
 #endif

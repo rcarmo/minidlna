@@ -1,1 +1,1 @@
-export CPPFLAGS="-I/usr/include/libavutil -I/usr/include/libavformat -I/usr/include/libavcodec -Wno-unused-result"
+export CFLAGS="-I/usr/include/libavutil -I/usr/include/libavformat -I/usr/include/libavcodec -Wno-unused-result"
