@@ -213,7 +213,9 @@ if not env.GetOption('clean') and not env.GetOption('help'):
         env.Append(LINKFLAGS = os.environ['LDFLAGS'])
         print(">> Appending custom link flags : " + os.environ['LDFLAGS'])
     
-    
+    if 'PKG_CONFIG_PATH' in os.environ:
+        env["ENV"]["PKG_CONFIG_PATH"] = os.environ.get("PKG_CONFIG_PATH")
+
     if not conf.CheckPKGConfig('0.15.0'):
         print 'pkg-config >= 0.15.0 not found.'
         Exit(1)
