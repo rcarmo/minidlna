@@ -82,7 +82,6 @@ enum client_types {
 	ESamsungSeriesA,
 	ESamsungSeriesB,
 	EMarantzDMP,
-	ELifeTab,
 	EStandardDLNA150 = 100
 };
 

@@ -102,7 +102,10 @@ fill_playlists()
 	if( sql_get_table(db, sql_buf, &result, &rows, NULL) != SQLITE_OK ) 
 		return -1;
 	if( !rows )
-		goto done;
+	{
+		sqlite3_free_table(result);
+		return 0;
+	}
 
 	rows++;
 	for( i=3; i<rows*3; i++ )
@@ -218,7 +221,6 @@ found:
 		}
 		sql_exec(db, "UPDATE PLAYLISTS set FOUND = %d where ID = %lld", found, plID);
 	}
-done:
 	sqlite3_free_table(result);
 	DPRINTF(E_WARN, L_SCANNER, "Finished parsing playlists.\n");
 
