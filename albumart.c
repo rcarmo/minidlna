@@ -20,7 +20,6 @@
 #include <string.h>
 #include <unistd.h>
 #include <dirent.h>
-#include <sys/param.h>
 #include <sys/stat.h>
 #include <sys/param.h>
 #include <libgen.h>
