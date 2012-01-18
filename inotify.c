@@ -16,8 +16,6 @@
  * along with MiniDLNA. If not, see <http://www.gnu.org/licenses/>.
  */
 #include "config.h"
-
-#ifdef HAVE_INOTIFY
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
@@ -31,7 +29,7 @@
 #include <sys/time.h>
 #include <sys/resource.h>
 #include <poll.h>
-#ifdef HAVE_SYS_INOTIFY_H
+#ifdef HAVE_INOTIFY_H
 #include <sys/inotify.h>
 #else
 #include "linux/inotify.h"
@@ -218,7 +216,8 @@ inotify_remove_watches(int fd)
 	{
 		last_w = w;
 		inotify_rm_watch(fd, w->wd);
-		free(w->path);
+		if( w->path )
+			free(w->path);
 		rm_watches++;
 		w = w->next;
 		free(last_w);
@@ -734,4 +733,3 @@ quitting:
 
 	return 0;
 }
-#endif
