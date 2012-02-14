@@ -57,6 +57,7 @@ static const struct {
 	{ UPNPINOTIFY, "inotify" },
 	{ UPNPDBDIR, "db_dir" },
 	{ UPNPLOGDIR, "log_dir" },
+	{ UPNPLOGLEVEL, "log_level" },
 	{ UPNPMINISSDPDSOCKET, "minissdpdsocket"},
 	{ ENABLE_TIVO, "enable_tivo" },
 	{ ENABLE_DLNA_STRICT, "strict_dlna" },
@@ -76,7 +77,7 @@ readoptionsfile(const char * fname)
 	int i;
 	enum upnpconfigoptions id;
 
-	if(!fname || *fname == '\0')
+	if(!fname || (strlen(fname) == 0))
 		return -1;
 
 	memset(buffer, 0, sizeof(buffer));
@@ -155,17 +156,8 @@ readoptionsfile(const char * fname)
 		}
 		else
 		{
-			num_options++;
-			t = realloc(ary_options, num_options * sizeof(struct option));
-			if(!t)
-			{
-				fprintf(stderr, "memory allocation error: %s=%s\n",
-					name, value);
-				num_options--;
-				continue;
-			}
-			else
-				ary_options = (struct option *)t;
+			num_options += 1;
+			ary_options = (struct option *) realloc(ary_options, num_options * sizeof(struct option));
 
 			ary_options[num_options-1].id = id;
 			strncpy(ary_options[num_options-1].value, value, MAX_OPTION_VALUE_LEN);
