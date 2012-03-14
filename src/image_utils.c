@@ -33,6 +33,9 @@
 #include <unistd.h>
 #include <setjmp.h>
 #include <jpeglib.h>
+#include <fcntl.h>
+#include <sys/types.h>
+#include <sys/stat.h>
 #ifdef HAVE_MACHINE_ENDIAN_H
 #include <machine/endian.h>
 #else
@@ -67,6 +70,14 @@ struct my_dst_mgr {
 	size_t sz;
 	size_t used;
 };
+
+typedef struct
+{
+    int transform;         /* rotation */
+    int num_components;
+    jvirt_barray_ptr *workspace_coef_arrays; /* workspace for transformations */
+} jpeg_transform_info;
+
 
 /* Destination manager to store data in a buffer */
 static void
@@ -859,4 +870,504 @@ image_save_to_jpeg_file(image_s * pimage, const char * path)
 	free(buf);
 
 	return (nwritten==size ? 0 : 1);
+}
+
+void 
+jtransform_request_workspace (j_decompress_ptr srcinfo, jpeg_transform_info *info)
+{
+	jvirt_barray_ptr *coef_arrays = NULL;
+	jpeg_component_info *compptr = NULL;
+	int ci = 0;
+
+	info->num_components = srcinfo->num_components;
+
+	coef_arrays = (jvirt_barray_ptr *)
+	              (*srcinfo->mem->alloc_small) ((j_common_ptr) srcinfo, JPOOL_IMAGE,
+	              sizeof(jvirt_barray_ptr) * info->num_components);
+
+	switch ( info->transform ) 
+	{
+		case ROTATE_180:
+			for ( ci = 0; ci < info->num_components; ci++ ) 
+			{
+				compptr = srcinfo->comp_info + ci;
+		
+				coef_arrays[ci] = (*srcinfo->mem->request_virt_barray)
+				                  ((j_common_ptr) srcinfo, JPOOL_IMAGE, FALSE,
+				                  (JDIMENSION) jround_up((long) compptr->width_in_blocks,
+				                                         (long) compptr->h_samp_factor),
+				                  (JDIMENSION) jround_up((long) compptr->height_in_blocks,
+				                                         (long) compptr->v_samp_factor),
+				                  (JDIMENSION) compptr->v_samp_factor);
+			}
+			break;
+		case ROTATE_90:
+		case ROTATE_270:
+			for (ci = 0; ci < info->num_components; ci++) 
+			{
+				compptr = srcinfo->comp_info + ci;
+				
+				coef_arrays[ci] = (*srcinfo->mem->request_virt_barray)
+				                  ((j_common_ptr) srcinfo, JPOOL_IMAGE, FALSE,
+				                  (JDIMENSION) jround_up((long) compptr->height_in_blocks,
+				                                         (long) compptr->v_samp_factor),
+				                  (JDIMENSION) jround_up((long) compptr->width_in_blocks,
+				                                         (long) compptr->h_samp_factor),
+				                  (JDIMENSION) compptr->h_samp_factor);
+			}
+			break;
+	}
+
+	info->workspace_coef_arrays = coef_arrays;
+}
+
+void 
+transpose_critical_parameters (j_compress_ptr dstinfo)
+{
+	int tblno, i, j, ci, itemp;
+	jpeg_component_info *compptr = NULL;
+	JQUANT_TBL *qtblptr = NULL;
+	JDIMENSION dtemp;
+	UINT16 qtemp;
+
+	/* Transpose basic image dimensions */
+	dtemp = dstinfo->image_width;
+	dstinfo->image_width = dstinfo->image_height;
+	dstinfo->image_height = dtemp;
+
+	/* Transpose sampling factors */
+	for ( ci = 0; ci < dstinfo->num_components; ci++ ) 
+	{
+		compptr = dstinfo->comp_info + ci;
+		itemp = compptr->h_samp_factor;
+		compptr->h_samp_factor = compptr->v_samp_factor;
+		compptr->v_samp_factor = itemp;
+	}
+
+	/* Transpose quantization tables */
+	for ( tblno = 0; tblno < NUM_QUANT_TBLS; tblno++ ) 
+	{
+		qtblptr = dstinfo->quant_tbl_ptrs[tblno];
+		if ( qtblptr != NULL ) 
+		{
+			for ( i = 0; i < DCTSIZE; i++ ) 
+				for ( j = 0; j < i; j++ ) 
+				{
+					qtemp = qtblptr->quantval[i* DCTSIZE + j];
+					qtblptr->quantval[i * DCTSIZE + j] = qtblptr->quantval[j * DCTSIZE + i];
+					qtblptr->quantval[j * DCTSIZE + i] = qtemp;
+				}
+		}
+	}
+}
+
+void 
+jcopy_markers_execute ( j_decompress_ptr srcinfo, j_compress_ptr dstinfo )
+{
+	jpeg_saved_marker_ptr marker;
+
+	for ( marker = srcinfo->marker_list; marker != NULL; marker = marker->next ) 
+	{
+		if ( dstinfo->write_JFIF_header &&
+		     marker->marker == JPEG_APP0 &&
+		     marker->data_length >= 5 &&
+		     GETJOCTET(marker->data[0]) == 0x4A &&
+		     GETJOCTET(marker->data[1]) == 0x46 &&
+		     GETJOCTET(marker->data[2]) == 0x49 &&
+		     GETJOCTET(marker->data[3]) == 0x46 &&
+		     GETJOCTET(marker->data[4]) == 0 )
+			continue;                 /* reject duplicate JFIF */
+
+		if ( dstinfo->write_Adobe_marker &&
+		     marker->marker == JPEG_APP0+14 &&
+		     marker->data_length >= 5 &&
+		     GETJOCTET(marker->data[0]) == 0x41 &&
+		     GETJOCTET(marker->data[1]) == 0x64 &&
+		     GETJOCTET(marker->data[2]) == 0x6F &&
+		     GETJOCTET(marker->data[3]) == 0x62 &&
+		     GETJOCTET(marker->data[4]) == 0x65 )
+			continue;                 /* reject duplicate Adobe */
+
+		jpeg_write_marker(dstinfo, marker->marker, marker->data, marker->data_length);
+	}
+}
+
+void 
+do_rot_90 ( j_decompress_ptr srcinfo, j_compress_ptr dstinfo, jvirt_barray_ptr *src_coef_arrays, jvirt_barray_ptr *dst_coef_arrays )
+{
+	JDIMENSION MCU_cols, comp_width, dst_blk_x, dst_blk_y;
+	int ci, i, j, offset_x, offset_y;
+	JBLOCKARRAY src_buffer, dst_buffer;
+	JCOEFPTR src_ptr, dst_ptr;
+	jpeg_component_info *compptr = NULL;
+
+	MCU_cols = dstinfo->image_width / ( dstinfo->max_h_samp_factor * DCTSIZE );
+
+	for ( ci = 0; ci < dstinfo->num_components; ci++ ) 
+	{
+		compptr = dstinfo->comp_info + ci;
+		comp_width = MCU_cols * compptr->h_samp_factor;
+
+		for ( dst_blk_y = 0; dst_blk_y < compptr->height_in_blocks; dst_blk_y += compptr->v_samp_factor) 
+		{
+			dst_buffer = (*srcinfo->mem->access_virt_barray)
+			             ((j_common_ptr) srcinfo, dst_coef_arrays[ci], dst_blk_y,
+			             (JDIMENSION) compptr->v_samp_factor, TRUE);
+
+			for ( offset_y = 0; offset_y < compptr->v_samp_factor; offset_y++ ) 
+			{
+				for ( dst_blk_x = 0; dst_blk_x < compptr->width_in_blocks; dst_blk_x += compptr->h_samp_factor) 
+				{
+					src_buffer = (*srcinfo->mem->access_virt_barray)
+					             ((j_common_ptr) srcinfo, src_coef_arrays[ci], dst_blk_x,
+					             (JDIMENSION) compptr->h_samp_factor, FALSE);
+
+					for ( offset_x = 0; offset_x < compptr->h_samp_factor; offset_x++ ) 
+					{
+						src_ptr = src_buffer[offset_x][dst_blk_y + offset_y];
+
+						if (dst_blk_x < comp_width) 
+						{
+							dst_ptr = dst_buffer[offset_y][comp_width - dst_blk_x - offset_x - 1];
+							
+							for ( i = 0; i < DCTSIZE; i++ ) 
+							{
+								for ( j = 0; j < DCTSIZE; j++ )
+									dst_ptr[j*DCTSIZE+i] = src_ptr[i*DCTSIZE+j];
+								i++;
+								for ( j = 0; j < DCTSIZE; j++ )
+									dst_ptr[j*DCTSIZE+i] = -src_ptr[i*DCTSIZE+j];
+							}
+						} 
+						else 
+						{
+							dst_ptr = dst_buffer[offset_y][dst_blk_x + offset_x];
+						
+							for ( i = 0; i < DCTSIZE; i++ )
+								for ( j = 0; j < DCTSIZE; j++ )
+									dst_ptr[j*DCTSIZE+i] = src_ptr[i*DCTSIZE+j];
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+void 
+do_rot_270 ( j_decompress_ptr srcinfo, j_compress_ptr dstinfo, jvirt_barray_ptr *src_coef_arrays, jvirt_barray_ptr *dst_coef_arrays )
+{
+	JDIMENSION MCU_rows, comp_height, dst_blk_x, dst_blk_y;
+	int ci, i, j, offset_x, offset_y;
+	JBLOCKARRAY src_buffer, dst_buffer;
+	JCOEFPTR src_ptr, dst_ptr;
+	jpeg_component_info *compptr = NULL;
+
+	MCU_rows = dstinfo->image_height / ( dstinfo->max_v_samp_factor * DCTSIZE );
+
+	for ( ci = 0; ci < dstinfo->num_components; ci++ ) 
+	{
+		compptr = dstinfo->comp_info + ci;
+		comp_height = MCU_rows * compptr->v_samp_factor;
+	
+		for (dst_blk_y = 0; dst_blk_y < compptr->height_in_blocks; dst_blk_y += compptr->v_samp_factor) 
+		{
+			dst_buffer = (*srcinfo->mem->access_virt_barray)
+			             ((j_common_ptr) srcinfo, dst_coef_arrays[ci], dst_blk_y,
+			             (JDIMENSION) compptr->v_samp_factor, TRUE);
+			
+			for ( offset_y = 0; offset_y < compptr->v_samp_factor; offset_y++ ) 
+			{
+				for ( dst_blk_x = 0; dst_blk_x < compptr->width_in_blocks; dst_blk_x += compptr->h_samp_factor) 
+				{
+					src_buffer = (*srcinfo->mem->access_virt_barray)
+					             ((j_common_ptr) srcinfo, src_coef_arrays[ci], dst_blk_x,
+					             (JDIMENSION) compptr->h_samp_factor, FALSE);
+
+					for ( offset_x = 0; offset_x < compptr->h_samp_factor; offset_x++ ) 
+					{
+						dst_ptr = dst_buffer[offset_y][dst_blk_x + offset_x];
+					
+						if (dst_blk_y < comp_height) 
+						{
+							src_ptr = src_buffer[offset_x][comp_height - dst_blk_y - offset_y - 1];
+							for ( i = 0; i < DCTSIZE; i++ ) 
+							{
+								for ( j = 0; j < DCTSIZE; j++ ) 
+								{
+									dst_ptr[j*DCTSIZE+i] = src_ptr[i*DCTSIZE+j];
+									j++;
+									dst_ptr[j*DCTSIZE+i] = -src_ptr[i*DCTSIZE+j];
+								}
+							}
+						} 
+						else 
+						{
+							src_ptr = src_buffer[offset_x][dst_blk_y + offset_y];
+							
+							for ( i = 0; i < DCTSIZE; i++ )
+								for ( j = 0; j < DCTSIZE; j++ )
+									dst_ptr[j*DCTSIZE+i] = src_ptr[i*DCTSIZE+j];
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+void 
+do_rot_180 ( j_decompress_ptr srcinfo, j_compress_ptr dstinfo, jvirt_barray_ptr *src_coef_arrays, jvirt_barray_ptr *dst_coef_arrays )
+{
+	JDIMENSION MCU_cols, MCU_rows, comp_width, comp_height, dst_blk_x, dst_blk_y;
+	int ci, i, j, offset_y;
+	JBLOCKARRAY src_buffer, dst_buffer;
+	JBLOCKROW src_row_ptr, dst_row_ptr;
+	JCOEFPTR src_ptr, dst_ptr;
+	jpeg_component_info *compptr;
+
+	MCU_cols = dstinfo->image_width / ( dstinfo->max_h_samp_factor * DCTSIZE );
+	MCU_rows = dstinfo->image_height / ( dstinfo->max_v_samp_factor * DCTSIZE );
+
+	for ( ci = 0; ci < dstinfo->num_components; ci++ ) 
+	{
+		compptr = dstinfo->comp_info + ci;
+		comp_width = MCU_cols * compptr->h_samp_factor;
+		comp_height = MCU_rows * compptr->v_samp_factor;
+
+		for ( dst_blk_y = 0; dst_blk_y < compptr->height_in_blocks; dst_blk_y += compptr->v_samp_factor ) 
+		{
+			dst_buffer = (*srcinfo->mem->access_virt_barray)
+			             ((j_common_ptr) srcinfo, dst_coef_arrays[ci], dst_blk_y, 
+			             (JDIMENSION) compptr->v_samp_factor, TRUE);
+			
+			if (dst_blk_y < comp_height) 
+			{
+				src_buffer = (*srcinfo->mem->access_virt_barray)
+				             ((j_common_ptr) srcinfo, src_coef_arrays[ci],
+			 	             comp_height - dst_blk_y - (JDIMENSION) compptr->v_samp_factor,
+				             (JDIMENSION) compptr->v_samp_factor, FALSE);
+			} 
+			else 
+			{
+				src_buffer = (*srcinfo->mem->access_virt_barray)
+				             ((j_common_ptr) srcinfo, src_coef_arrays[ci], dst_blk_y,
+				             (JDIMENSION) compptr->v_samp_factor, FALSE);
+			}
+
+			for ( offset_y = 0; offset_y < compptr->v_samp_factor; offset_y++ ) 
+			{
+				if ( dst_blk_y < comp_height ) 
+				{
+					dst_row_ptr = dst_buffer[offset_y];
+					src_row_ptr = src_buffer[compptr->v_samp_factor - offset_y - 1];
+				
+					for ( dst_blk_x = 0; dst_blk_x < comp_width; dst_blk_x++ ) 
+					{
+						dst_ptr = dst_row_ptr[dst_blk_x];
+						src_ptr = src_row_ptr[comp_width - dst_blk_x - 1];
+					
+						for ( i = 0; i < DCTSIZE; i += 2 ) 
+						{
+							for ( j = 0; j < DCTSIZE; j += 2 ) 
+							{
+								*dst_ptr++ = *src_ptr++;
+								*dst_ptr++ = - *src_ptr++;
+							}
+
+							for (j = 0; j < DCTSIZE; j += 2) 
+							{
+								*dst_ptr++ = - *src_ptr++;
+								*dst_ptr++ = *src_ptr++;
+							}
+						}
+					}
+
+					for ( ; dst_blk_x < compptr->width_in_blocks; dst_blk_x++ ) 
+					{
+						dst_ptr = dst_row_ptr[dst_blk_x];
+						src_ptr = src_row_ptr[dst_blk_x];
+					
+						for ( i = 0; i < DCTSIZE; i += 2 ) 
+						{
+							for ( j = 0; j < DCTSIZE; j++ )
+								*dst_ptr++ = *src_ptr++;
+
+							for ( j = 0; j < DCTSIZE; j++ )
+								*dst_ptr++ = - *src_ptr++;
+						}
+					}
+				} 
+				else 
+				{
+					dst_row_ptr = dst_buffer[offset_y];
+					src_row_ptr = src_buffer[offset_y];
+				
+					for ( dst_blk_x = 0; dst_blk_x < comp_width; dst_blk_x++ ) 
+					{
+						dst_ptr = dst_row_ptr[dst_blk_x];
+						src_ptr = src_row_ptr[comp_width - dst_blk_x - 1];
+					
+						for ( i = 0; i < DCTSIZE2; i += 2 ) 
+						{
+							*dst_ptr++ = *src_ptr++;
+							*dst_ptr++ = - *src_ptr++;
+						}
+					}
+
+					for ( ; dst_blk_x < compptr->width_in_blocks; dst_blk_x++ ) 
+					{
+						dst_ptr = dst_row_ptr[dst_blk_x];
+						src_ptr = src_row_ptr[dst_blk_x];
+					
+						for ( i = 0; i < DCTSIZE2; i++ )
+							*dst_ptr++ = *src_ptr++;
+					}
+				}
+			}
+		}
+	}
+}
+
+void 
+jtransform_execute_transformation (j_decompress_ptr srcinfo, j_compress_ptr dstinfo, jvirt_barray_ptr *src_coef_arrays, jpeg_transform_info * info)
+{
+	jvirt_barray_ptr *dst_coef_arrays = info->workspace_coef_arrays;
+
+	switch ( info->transform ) 
+	{
+		case ROTATE_90:
+			do_rot_90(srcinfo, dstinfo, src_coef_arrays, dst_coef_arrays);
+			break;
+		case ROTATE_180:
+			do_rot_180(srcinfo, dstinfo, src_coef_arrays, dst_coef_arrays);
+			break;
+		case ROTATE_270:
+			do_rot_270(srcinfo, dstinfo, src_coef_arrays, dst_coef_arrays);
+			break;
+	}
+}
+
+jvirt_barray_ptr * 
+jtransform_adjust_parameters ( j_compress_ptr dstinfo, jvirt_barray_ptr * src_coef_arrays, jpeg_transform_info * info )
+{
+	switch ( info->transform ) 
+	{
+		case ROTATE_90:
+			transpose_critical_parameters(dstinfo);
+			break;
+		case ROTATE_270:
+			transpose_critical_parameters(dstinfo);
+			break;
+		case ROTATE_180:
+		default:
+			break;
+	}
+	if ( info->workspace_coef_arrays != NULL )
+		return info->workspace_coef_arrays;
+	return src_coef_arrays;
+}
+
+
+void 
+jcopy_markers_setup ( j_decompress_ptr srcinfo )
+{
+	int m;
+
+	jpeg_save_markers(srcinfo, JPEG_COM, 0xFFFF);
+	for ( m = 0; m < 16; m++)
+	{
+		jpeg_save_markers(srcinfo, JPEG_APP0 + m, 0xFFFF);
+	}
+}
+
+/* It rotates image file base on EXIF ROTATION information */
+/* Original file is not touched, it is created new temporary file */
+
+int
+do_rotation( char *filename, int rotation )
+{
+	struct jpeg_decompress_struct srcinfo;
+	struct jpeg_compress_struct dstinfo;
+	jpeg_transform_info transformoption;
+	jvirt_barray_ptr *src_coef_arrays = NULL;
+	jvirt_barray_ptr *dst_coef_arrays = NULL;
+	struct jpeg_error_mgr jsrcerr,jdsterr;
+	FILE *newfd, *ifd;
+	int fd;
+	char temp[]="/tmp/img.XXXXXX";
+   
+	ifd = fopen(filename, "r");
+	if ( !ifd )
+	{
+		return -1;
+	}
+
+	srcinfo.err = jpeg_std_error(&jsrcerr);
+	dstinfo.err = jpeg_std_error(&jdsterr);
+	jpeg_create_decompress(&srcinfo);
+	jpeg_create_compress(&dstinfo);
+	srcinfo.mem->max_memory_to_use = dstinfo.mem->max_memory_to_use;
+
+	fd = mkstemp(temp);
+	/* it is not needed to store this file pernamently */
+	/* therefore the file will be immediately unlinked. */
+	/* file descriptor will be still valid but after calling close */
+	/* file will be deleted by OS */
+	unlink(temp); 
+
+	if ( fd == -1 )
+	{
+		return fileno(ifd);
+	}
+
+	newfd = fdopen(fd, "wb+");
+
+	if ( !newfd )
+	{
+		close(fd);
+		return fileno(ifd);
+	}
+
+	switch ( rotation )
+	{
+		case 270: transformoption.transform = ROTATE_270;
+				  break;
+		case 180: transformoption.transform = ROTATE_180;
+				  break;
+		case 90: transformoption.transform = ROTATE_90;
+				  break;
+		default:
+		        close(fd); 
+		        return fileno(ifd);
+	}
+
+	/* This part is based on source code of libjpeg's jpegtran */
+	jpeg_stdio_src(&srcinfo, ifd);
+	jpeg_read_header(&srcinfo, TRUE);
+	jcopy_markers_setup(&srcinfo);
+
+	jtransform_request_workspace(&srcinfo, &transformoption);
+
+	src_coef_arrays = jpeg_read_coefficients(&srcinfo);
+	jpeg_copy_critical_parameters(&srcinfo, &dstinfo);
+
+	dst_coef_arrays = jtransform_adjust_parameters(&dstinfo,
+	                                               src_coef_arrays,
+	                                               &transformoption);
+	jpeg_stdio_dest(&dstinfo, newfd);
+	jpeg_write_coefficients(&dstinfo, dst_coef_arrays);
+	jcopy_markers_execute(&srcinfo, &dstinfo);
+
+	jtransform_execute_transformation(&srcinfo, &dstinfo,
+	                                  src_coef_arrays,
+	                                  &transformoption);
+	jpeg_finish_compress(&dstinfo);
+	jpeg_destroy_compress(&dstinfo);
+	jpeg_finish_decompress(&srcinfo);
+	jpeg_destroy_decompress(&srcinfo);
+
+	fclose(ifd);
+
+	return fileno(newfd);	
 }
