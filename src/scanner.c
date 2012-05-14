@@ -36,6 +36,9 @@
 #ifdef ENABLE_NLS
 #include <libintl.h>
 #endif
+#include <libavutil/avutil.h>
+#include <libavformat/avformat.h>
+
 #include <sqlite3.h>
 
 #include "upnpglobalvars.h"
@@ -729,30 +732,28 @@ ScanDirectory(const char * dir, const char * parent, enum media_types dir_type)
 	enum file_types type;
 
 	setlocale(LC_COLLATE, "");
-	if( chdir(dir) != 0 )
-		return;
 
 	DPRINTF(parent?E_INFO:E_WARN, L_SCANNER, _("Scanning %s\n"), dir);
 	switch( dir_type )
 	{
 		case ALL_MEDIA:
-			n = scandir(".", &namelist, filter_media, alphasort);
+			n = scandir(dir, &namelist, filter_media, alphasort);
 			break;
 		case AUDIO_ONLY:
-			n = scandir(".", &namelist, filter_audio, alphasort);
+			n = scandir(dir, &namelist, filter_audio, alphasort);
 			break;
 		case VIDEO_ONLY:
-			n = scandir(".", &namelist, filter_video, alphasort);
+			n = scandir(dir, &namelist, filter_video, alphasort);
 			break;
 		case IMAGES_ONLY:
-			n = scandir(".", &namelist, filter_images, alphasort);
+			n = scandir(dir, &namelist, filter_images, alphasort);
 			break;
 		default:
 			n = -1;
 			break;
 	}
 	if (n < 0) {
-		fprintf(stderr, "Error scanning %s [scandir]\n", dir);
+		DPRINTF(E_WARN, L_SCANNER, "Error scanning %s\n", dir);
 		return;
 	}
 
@@ -797,11 +798,7 @@ ScanDirectory(const char * dir, const char * parent, enum media_types dir_type)
 		free(namelist[i]);
 	}
 	free(namelist);
-	if( parent )
-	{
-		chdir(dirname((char*)dir));
-	}
-	else
+	if( !parent )
 	{
 		DPRINTF(E_WARN, L_SCANNER, _("Scanning %s finished (%llu files)!\n"), dir, fileno);
 	}
@@ -821,7 +818,8 @@ start_scanner()
 	if( flag )
 		fclose(flag);
 #endif
-	freopen("/dev/null", "a", stderr);
+	av_register_all();
+	av_log_set_level(AV_LOG_PANIC);
 	while( media_path )
 	{
 		strncpy(name, media_path->path, sizeof(name));
@@ -829,7 +827,6 @@ start_scanner()
 		ScanDirectory(media_path->path, NULL, media_path->type);
 		media_path = media_path->next;
 	}
-	freopen("/proc/self/fd/2", "a", stderr);
 #ifdef READYNAS
 	if( access("/ramfs/.rescan_done", F_OK) == 0 )
 		system("/bin/sh /ramfs/.rescan_done");

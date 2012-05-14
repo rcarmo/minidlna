@@ -200,13 +200,31 @@ def CheckIconv(context):
    context.Result(ret)
    return ret
 
+def CheckScandir(context):
+   context.Message('Checking scandir... ')
+   t = """
+       #include <stdlib.h>
+       #include <sys/types.h>
+       #include <dirent.h>
+		 int filter(%s *d);
+		 int main() {
+		 struct dirent **ptr = NULL;
+		 char *name = NULL;
+		 (void)scandir(name, &ptr, filter, alphasort);}
+		 """
+   ret = context.TryCompile(t % 'const struct dirent' , '.cc')
+
+   context.Result(ret)
+   return ret
+
 conf = Configure(
     env, 
     config_h="src/config.h",
     custom_tests = {
     'CheckPKGConfig' : CheckPKGConfig,
     'CheckPKG' : CheckPKG,
-	 'CheckIconv' : CheckIconv
+	 'CheckIconv' : CheckIconv,
+	 'CheckScandir' : CheckScandir
     }
 )    
 
@@ -286,8 +304,14 @@ if not env.GetOption('clean') and not env.GetOption('help'):
 		  conf.Define('ICONV_CONST', 'const');
     else:
 		  conf.Define('ICONV_CONST');
-		  
-    
+
+    conf.config_h_text += "\n"
+	 		  
+    if conf.CheckScandir():
+		  conf.Define('SCANDIR_CONST', 1);
+    else:
+        conf.Define('SCANDIR_CONST', 0);
+
     if GetOption("enable_nls") and conf.CheckCHeader('libintl.h'):
         conf.config_h_text += "\n"
         conf.Define('ENABLE_NLS',1)
@@ -407,6 +431,7 @@ if GetOption("enable_nls"):
         "po/ja.po",
         "po/nb.po",
         "po/nl.po",
+		  "po/pl.po",
         "po/ru.po",
         "po/sl.po",
         "po/sv.po"

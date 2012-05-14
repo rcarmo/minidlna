@@ -75,6 +75,7 @@
 
 
 #ifdef ENABLE_NLS
+#include <locale.h>
 #include <libintl.h>
 #endif
 
@@ -163,7 +164,7 @@ sigterm(int sig)
 	/*errno = save_errno;*/
 }
 
-/* record the startup time, for returning uptime */
+/* record the startup time */
 static void
 set_startup_time(void)
 {
@@ -268,6 +269,7 @@ getfriendlyname(char * buf, int len)
 		}
 	}
 	fclose(info);
+#if PNPX
 	memcpy(pnpx_hwid+4, "01F2", 4);
 	if( strcmp(modelnumber, "NVX") == 0 )
 		memcpy(pnpx_hwid+17, "0101", 4);
@@ -290,6 +292,7 @@ getfriendlyname(char * buf, int len)
 		memcpy(pnpx_hwid+17, "0108", 4);
 	else if( strcmp(modelnumber, "NV+ v2") == 0 )
 		memcpy(pnpx_hwid+17, "0109", 4);
+#endif
 #else
 	char * logname;
 	logname = getenv("LOGNAME");
@@ -334,8 +337,9 @@ static void read_file(img_t* img, const char* dir, const char *filename) {
 	char path[1024];
 	sprintf( path, "%s/%s", dir, filename);
 	FILE *file = fopen(path, "rb");
+	size_t nsize = 0;
+	char err[1024];
 	if(!file) {
-		char err[1024];
 		sprintf(err, "Failed to open path %s", path);
 
 		perror(err);
@@ -350,7 +354,9 @@ static void read_file(img_t* img, const char* dir, const char *filename) {
 		perror("read_file(): failed to allocate memory");
 		exit(EXIT_FAILURE);
 	}
-	fread(img->data, sizeof(char), img->size, file);
+	if ( ( nsize = fread(img->data, sizeof(char), img->size, file) ) < 0 ) {
+		sprintf(err, "Failed to read file\n");
+	}
 	fclose(file);
 }
 
@@ -379,7 +385,7 @@ init(int argc, char * * argv)
 	char * path;
 	char buf[PATH_MAX];
 	char ip_addr[INET_ADDRSTRLEN + 3] = {'\0'};
-	char log_str[72] = "general,artwork,database,inotify,scanner,metadata,http,ssdp,tivo=warn";
+	char log_str[75] = "general,artwork,database,inotify,scanner,metadata,http,ssdp,tivo=warn";
 	char *log_level = NULL;
 
 	/* first check if "-f" option is used */
@@ -826,6 +832,8 @@ init(int argc, char * * argv)
 	if(debug_flag)
 	{
 		pid = getpid();
+		strcpy(log_str+65, "maxdebug");
+		log_level = log_str;
 		log_init(NULL, log_level);
 	}
 	else

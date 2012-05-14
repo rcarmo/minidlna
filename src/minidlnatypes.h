@@ -33,6 +33,8 @@
 #include "config.h"
 #endif /* HAVE_CONFIG_H */
 #include <netinet/in.h>
+#include <time.h>
+#include <fcntl.h>
 
 /* structure for storing lan addresses
  * with ascii representation and mask */

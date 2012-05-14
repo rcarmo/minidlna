@@ -86,6 +86,12 @@ BuildSendAndCloseSoapResp(struct upnphttp * h,
 		"</s:Body>"
 		"</s:Envelope>\r\n";
 
+	if (!body || bodylen < 0)
+	{
+		Send500(h);
+		return;
+	}
+
 	BuildHeader_upnphttp(h, 200, "OK",  sizeof(beforebody) - 1
 		+ sizeof(afterbody) - 1 + bodylen );
 
@@ -581,8 +587,7 @@ parse_sort_criteria(char *sortCriteria, int *error)
 		else
 		{
 			DPRINTF(E_ERROR, L_HTTP, "No order specified [%s]\n", item);
-			*error = -1;
-			goto unhandled_order;
+			goto bad_direction;
 		}
 		if( strcasecmp(item, "upnp:class") == 0 )
 		{
@@ -608,6 +613,7 @@ parse_sort_criteria(char *sortCriteria, int *error)
 		else
 		{
 			DPRINTF(E_ERROR, L_HTTP, "Unhandled SortCriteria [%s]\n", item);
+		bad_direction:
 			*error = -1;
 			if( i )
 			{
@@ -1070,6 +1076,7 @@ callback(void *args, int argc, char **argv, char **azColName)
 		/* If the client calls for BrowseMetadata on root, we have to include our "upnp:searchClass"'s, unless they're filtered out */
 		if( (passed_args->requested == 1) && (strcmp(id, "0") == 0) )
 		{
+			ret = strcatf(str, " searchable=\"1\"");
 			if( passed_args->filter & FILTER_UPNP_SEARCHCLASS )
 			{
 				ret = strcatf(str, "&gt;"
