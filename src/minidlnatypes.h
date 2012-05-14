@@ -33,6 +33,8 @@
 #include "config.h"
 #endif /* HAVE_CONFIG_H */
 #include <netinet/in.h>
+#include <time.h>
+#include <fcntl.h>
 
 /* structure for storing lan addresses
  * with ascii representation and mask */
@@ -70,7 +72,7 @@ enum file_types {
 enum client_types {
 	EXbox = 1,
 	EPS3,
-	ESamsungTV,
+	ESamsungSeriesC,
 	EDenonReceiver,
 	EFreeBox,
 	EPopcornHour,
@@ -83,6 +85,8 @@ enum client_types {
 	ENetgearEVA2000,
 	ESamsungSeriesA,
 	ESamsungSeriesB,
+	EMarantzDMP,
+	ELifeTab,
 	EStandardDLNA150 = 100
 };
 

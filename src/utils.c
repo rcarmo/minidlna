@@ -19,7 +19,7 @@
 #include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
-#include <linux/limits.h>
+#include <sys/param.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #include <sys/types.h>
@@ -45,6 +45,30 @@ strcatf(struct string_s *str, const char *fmt, ...)
 	return ret;
 }
 
+inline void
+strncpyt(char *dst, const char *src, size_t len)
+{
+	strncpy(dst, src, len);
+	dst[len-1] = '\0';
+}
+
+inline int
+xasprintf(char **strp, char *fmt, ...)
+{
+	va_list args;
+	int ret;
+
+	va_start(args, fmt);
+	ret = vasprintf(strp, fmt, args);
+	va_end(args);
+	if( ret < 0 )
+	{
+		DPRINTF(E_WARN, L_GENERAL, "xasprintf: allocation failed\n");
+		*strp = NULL;
+	}
+	return ret;
+}
+
 int
 ends_with(const char * haystack, const char * needle)
 {
@@ -62,16 +86,32 @@ ends_with(const char * haystack, const char * needle)
 char *
 trim(char *str)
 {
-        if (!str)
-                return(NULL);
-        int i;
-        for (i=0; i <= strlen(str) && (isspace(str[i]) || str[i] == '"'); i++) {
+	int i;
+	int len;
+
+	if (!str)
+		return(NULL);
+
+	len = strlen(str);
+	for (i=len-1; i >= 0 && isspace(str[i]); i--)
+	{
+		str[i] = '\0';
+		len--;
+	}
+	while (isspace(*str))
+	{
+		str++;
+		len--;
+	}
+
+	if (str[0] == '"' && str[len-1] == '"')
+	{
+		str[0] = '\0';
+		str[len-1] = '\0';
 		str++;
 	}
-        for (i=(strlen(str)-1); i >= 0 && (isspace(str[i]) || str[i] == '"'); i--) {
-                str[i] = '\0';
-        }
-        return str;
+
+	return str;
 }
 
 /* Find the first occurrence of p in s, where s is terminated by t */
@@ -83,13 +123,36 @@ strstrc(const char *s, const char *p, const char t)
 
 	endptr = strchr(s, t);
 	if (!endptr)
-		return NULL;
+		return strstr(s, p);
 
 	plen = strlen(p);
 	slen = endptr - s;
 	while (slen >= plen)
 	{
 		if (*s == *p && strncmp(s+1, p+1, plen-1) == 0)
+			return (char*)s;
+		s++;
+		slen--;
+	}
+
+	return NULL;
+} 
+
+char *
+strcasestrc(const char *s, const char *p, const char t)
+{
+	char *endptr;
+	size_t slen, plen;
+
+	endptr = strchr(s, t);
+	if (!endptr)
+		return strcasestr(s, p);
+
+	plen = strlen(p);
+	slen = endptr - s;
+	while (slen >= plen)
+	{
+		if (*s == *p && strncasecmp(s+1, p+1, plen-1) == 0)
 			return (char*)s;
 		s++;
 		slen--;
@@ -159,12 +222,13 @@ escape_tag(const char *tag, int force_alloc)
 {
 	char *esc_tag = NULL;
 
-	if( strchr(tag, '&') || strchr(tag, '<') || strchr(tag, '>') )
+	if( strchr(tag, '&') || strchr(tag, '<') || strchr(tag, '>') || strchr(tag, '"') )
 	{
 		esc_tag = strdup(tag);
 		esc_tag = modifyString(esc_tag, "&", "&amp;amp;", 0);
 		esc_tag = modifyString(esc_tag, "<", "&amp;lt;", 0);
 		esc_tag = modifyString(esc_tag, ">", "&amp;gt;", 0);
+		esc_tag = modifyString(esc_tag, "\"", "&amp;quot;", 0);
 	}
 	else if( force_alloc )
 		esc_tag = strdup(tag);
@@ -192,6 +256,11 @@ make_dir(char * path, mode_t mode)
 
 	do {
 		c = '\0';
+
+		/* Before we do anything, skip leading /'s, so we don't bother
+		 * trying to create /. */
+		while (*s == '/')
+			++s;
 
 		/* Bypass leading non-'/'s and then subsequent '/'s. */
 		while (*s) {
@@ -223,6 +292,21 @@ make_dir(char * path, mode_t mode)
 		*s = c;
 
 	} while (1);
+}
+
+/* Simple, efficient hash function from Daniel J. Bernstein */
+unsigned int
+DJBHash(const char *str, int len)
+{
+	unsigned int hash = 5381;
+	unsigned int i = 0;
+
+	for(i = 0; i < len; str++, i++)
+	{
+		hash = ((hash << 5) + hash) + (*str);
+	}
+
+	return hash;
 }
 
 int

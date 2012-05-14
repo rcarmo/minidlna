@@ -1,5 +1,7 @@
-/* $Id$ */
-/* MiniUPnP project
+/* MiniDLNA media server
+ * This file is part of MiniDLNA.
+ *
+ * The code herein is based on the MiniUPnP Project.
  * http://miniupnp.free.fr/ or http://miniupnp.tuxfamily.org/
  *
  * Copyright (c) 2006, Thomas Bernard
@@ -30,6 +32,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -132,6 +135,7 @@ OpenAndConfSSDPNotifySocket(in_addr_t addr)
 	int s;
 	unsigned char loopchar = 0;
 	int bcast = 1;
+	uint8_t ttl = 4;
 	struct in_addr mc_if;
 	struct sockaddr_in sockname;
 	
@@ -156,6 +160,8 @@ OpenAndConfSSDPNotifySocket(in_addr_t addr)
 		close(s);
 		return -1;
 	}
+
+	setsockopt(s, IPPROTO_IP, IP_MULTICAST_TTL, &ttl, sizeof(ttl));
 	
 	if(setsockopt(s, SOL_SOCKET, SO_BROADCAST, &bcast, sizeof(bcast)) < 0)
 	{
@@ -366,7 +372,7 @@ ParseUPnPClient(char *location)
 	int client;
 	enum client_types type = 0;
 	uint32_t flags = 0;
-	char *model, *serial;
+	char *model, *serial, *name;
 
 	if (strncmp(location, "http://", 7) != 0)
 		return;
@@ -450,13 +456,16 @@ close:
 	ParseNameValue(off, nread, &xml);
 	model = GetValueFromNameValueList(&xml, "modelName");
 	serial = GetValueFromNameValueList(&xml, "serialNumber");
+	name = GetValueFromNameValueList(&xml, "friendlyName");
 	if( model )
 	{
 		DPRINTF(E_DEBUG, L_SSDP, "Model: %s\n", model);
 		if( strstr(model, "Roku SoundBridge") )
 		{
 			type = ERokuSoundBridge;
+			flags |= FLAG_MS_PFS;
 			flags |= FLAG_AUDIO_ONLY;
+			flags |= FLAG_MIME_WAV_WAV;
 		}
 		else if( strcmp(model, "Samsung DTV DMR") == 0 && serial )
 		{
@@ -470,11 +479,21 @@ close:
 				flags |= FLAG_NO_RESIZE;
 			}
 		}
+		else
+		{
+			if( name && (strcmp(name, "marantz DMP") == 0) )
+			{
+				type = EMarantzDMP;
+				flags |= FLAG_DLNA;
+				flags |= FLAG_MIME_WAV_WAV;
+			}
+		}
 	}
+	ClearNameValueList(&xml);
 	if( !type )
 		return;
-	client = SearchClientCache(dest.sin_addr, 1);
 	/* Add this client to the cache if it's not there already. */
+	client = SearchClientCache(dest.sin_addr, 1);
 	if( client < 0 )
 	{
 		for( client=0; client<CLIENT_CACHE_SLOTS; client++ )
@@ -499,15 +518,13 @@ close:
  * process SSDP M-SEARCH requests and responds to them */
 void
 ProcessSSDPRequest(int s, unsigned short port)
-/*ProcessSSDPRequest(int s, struct lan_addr_s * lan_addr, int n_lan_addr,
-                   unsigned short port)*/
 {
 	int n;
 	char bufr[1500];
 	socklen_t len_r;
 	struct sockaddr_in sendername;
 	int i;
-	char *st = NULL, *mx = NULL, *man = NULL, *mx_end = NULL, *loc = NULL, *srv = NULL;
+	char *st = NULL, *mx = NULL, *man = NULL, *mx_end = NULL;
 	int man_len = 0;
 	len_r = sizeof(struct sockaddr_in);
 
@@ -522,17 +539,16 @@ ProcessSSDPRequest(int s, unsigned short port)
 
 	if(memcmp(bufr, "NOTIFY", 6) == 0)
 	{
-		int loc_len = 0, srv_len = 0;
+		char *loc = NULL, *srv = NULL, *nts = NULL, *nt = NULL;
+		int loc_len = 0;
 		//DEBUG DPRINTF(E_DEBUG, L_SSDP, "Received SSDP notify:\n%.*s", n, bufr);
 		for(i=0; i < n; i++)
 		{
 			if( bufr[i] == '*' )
 				break;
 		}
-		if( !strcasestr(bufr+i, "HTTP/1.1") )
-		{
+		if( !strcasestrc(bufr+i, "HTTP/1.1", '\r') )
 			return;
-		}
 		while(i < n)
 		{
 			while((i < n - 2) && (bufr[i] != '\r' || bufr[i+1] != '\n'))
@@ -541,32 +557,34 @@ ProcessSSDPRequest(int s, unsigned short port)
 			if(strncasecmp(bufr+i, "SERVER:", 7) == 0)
 			{
 				srv = bufr+i+7;
-				srv_len = 0;
 				while(*srv == ' ' || *srv == '\t') srv++;
-				while(srv[srv_len]!='\r' && srv[srv_len]!='\n') srv_len++;
 			}
 			else if(strncasecmp(bufr+i, "LOCATION:", 9) == 0)
 			{
 				loc = bufr+i+9;
-				loc_len = 0;
 				while(*loc == ' ' || *loc == '\t') loc++;
 				while(loc[loc_len]!='\r' && loc[loc_len]!='\n') loc_len++;
-				loc[loc_len] = '\0';
 			}
 			else if(strncasecmp(bufr+i, "NTS:", 4) == 0)
 			{
-				man = bufr+i+4;
-				man_len = 0;
-				while(*man == ' ' || *man == '\t') man++;
-				while(man[man_len]!='\r' && man[man_len]!='\n') man_len++;
+				nts = bufr+i+4;
+				while(*nts == ' ' || *nts == '\t') nts++;
+			}
+			else if(strncasecmp(bufr+i, "NT:", 3) == 0)
+			{
+				nt = bufr+i+3;
+				while(*nt == ' ' || *nt == '\t') nt++;
 			}
 		}
-		if( !loc || !srv || !man || (strncmp(man, "ssdp:alive", man_len) != 0) )
+		if( !loc || !srv || !nt || !nts || (strncmp(nts, "ssdp:alive", 10) != 0) ||
+		    (strncmp(nt, "urn:schemas-upnp-org:device:MediaRenderer", 41) != 0) )
 		{
 			return;
 		}
-		if( strncmp(srv, "Allegro-Software-RomPlug", 24) == 0 ||
-		    strstr(loc, "SamsungMRDesc.xml") )
+		loc[loc_len] = '\0';
+		if( (strncmp(srv, "Allegro-Software-RomPlug", 24) == 0) || /* Roku */
+		    (strstr(loc, "SamsungMRDesc.xml") != NULL) || /* Samsung TV */
+		    (strstrc(srv, "DigiOn DiXiM", '\r') != NULL) ) /* Marantz Receiver */
 		{
 			/* Check if the client is already in cache */
 			i = SearchClientCache(sendername.sin_addr, 1);
@@ -581,7 +599,6 @@ ProcessSSDPRequest(int s, unsigned short port)
 			}
 			ParseUPnPClient(loc);
 		}
-		return;
 	}
 	else if(memcmp(bufr, "M-SEARCH", 8) == 0)
 	{
@@ -592,10 +609,8 @@ ProcessSSDPRequest(int s, unsigned short port)
 			if( bufr[i] == '*' )
 				break;
 		}
-		if( !strcasestr(bufr+i, "HTTP/1.1") )
-		{
+		if( !strcasestrc(bufr+i, "HTTP/1.1", '\r') )
 			return;
-		}
 		while(i < n)
 		{
 			while((i < n - 2) && (bufr[i] != '\r' || bufr[i+1] != '\n'))
@@ -634,12 +649,12 @@ ProcessSSDPRequest(int s, unsigned short port)
 		}
 		else if( !man || (strncmp(man, "\"ssdp:discover\"", 15) != 0) )
 		{
-			DPRINTF(E_INFO, L_SSDP, "WARNING: Ignoring invalid SSDP M-SEARCH from %s [bad MAN header %.*s]\n",
-			   inet_ntoa(sendername.sin_addr), man_len, man);
+			DPRINTF(E_INFO, L_SSDP, "WARNING: Ignoring invalid SSDP M-SEARCH from %s [bad %s header '%.*s']\n",
+			   inet_ntoa(sendername.sin_addr), "MAN", man_len, man);
 		}
 		else if( !mx || mx == mx_end || mx_val < 0 ) {
-			DPRINTF(E_INFO, L_SSDP, "WARNING: Ignoring invalid SSDP M-SEARCH from %s [bad MX header %.*s]\n",
-			   inet_ntoa(sendername.sin_addr), mx_len, mx);
+			DPRINTF(E_INFO, L_SSDP, "WARNING: Ignoring invalid SSDP M-SEARCH from %s [bad %s header '%.*s']\n",
+			   inet_ntoa(sendername.sin_addr), "MX", mx_len, mx);
 		}
 		else if( st && (st_len > 0) )
 		{
@@ -669,11 +684,26 @@ ProcessSSDPRequest(int s, unsigned short port)
 			for(i = 0; known_service_types[i]; i++)
 			{
 				l = strlen(known_service_types[i]);
-				if(l<=st_len && (0 == memcmp(st, known_service_types[i], l)))
+				if( l <= st_len && (memcmp(st, known_service_types[i], l) == 0))
 				{
-					/* Check version number - must always be 1 currently. */
-					if( (st[st_len-2] == ':') && (atoi(st+st_len-1) != 1) )
-						break;
+					if( st_len != l )
+					{
+						/* Check version number - must always be 1 currently. */
+						if( (st[l-1] == ':') && (st[l] == '1') )
+							l++;
+						while( l < st_len )
+						{
+							if( !isspace(st[l]) )
+							{
+								DPRINTF(E_DEBUG, L_SSDP, "Ignoring SSDP M-SEARCH with bad extra data [%s]\n",
+									inet_ntoa(sendername.sin_addr));
+								break;
+							}
+							l++;
+						}
+						if( l != st_len )
+							break;
+					}
 					_usleep(random()>>20);
 					SendSSDPAnnounce2(s, sendername,
 					                  i,
@@ -715,6 +745,7 @@ SendSSDPGoodbye(int * sockets, int n_sockets)
 	struct sockaddr_in sockname;
 	int n, l;
 	int i, j;
+	int dup, ret = 0;
 	char bufr[512];
 
 	memset(&sockname, 0, sizeof(struct sockaddr_in));
@@ -722,31 +753,35 @@ SendSSDPGoodbye(int * sockets, int n_sockets)
 	sockname.sin_port = htons(SSDP_PORT);
 	sockname.sin_addr.s_addr = inet_addr(SSDP_MCAST_ADDR);
 
-	for(j=0; j<n_sockets; j++)
+	for (dup = 0; dup < 2; dup++)
 	{
-		for(i=0; known_service_types[i]; i++)
+		for(j=0; j<n_sockets; j++)
 		{
-			l = snprintf(bufr, sizeof(bufr),
-			             "NOTIFY * HTTP/1.1\r\n"
-			             "HOST:%s:%d\r\n"
-			             "NT:%s%s\r\n"
-			             "USN:%s%s%s%s\r\n"
-			             "NTS:ssdp:byebye\r\n"
-			             "\r\n",
-			             SSDP_MCAST_ADDR, SSDP_PORT,
-			             known_service_types[i], (i>1?"1":""),
-			             uuidvalue, (i>0?"::":""), (i>0?known_service_types[i]:""), (i>1?"1":"") );
-			//DEBUG DPRINTF(E_DEBUG, L_SSDP, "Sending NOTIFY:\n%s", bufr);
-			n = sendto(sockets[j], bufr, l, 0,
-			           (struct sockaddr *)&sockname, sizeof(struct sockaddr_in) );
-			if(n < 0)
+			for(i=0; known_service_types[i]; i++)
 			{
-				DPRINTF(E_ERROR, L_SSDP, "sendto(udp_shutdown=%d): %s\n", sockets[j], strerror(errno));
-				return -1;
+				l = snprintf(bufr, sizeof(bufr),
+				             "NOTIFY * HTTP/1.1\r\n"
+				             "HOST:%s:%d\r\n"
+				             "NT:%s%s\r\n"
+				             "USN:%s%s%s%s\r\n"
+			        	     "NTS:ssdp:byebye\r\n"
+				             "\r\n",
+				             SSDP_MCAST_ADDR, SSDP_PORT,
+				             known_service_types[i], (i>1?"1":""),
+				             uuidvalue, (i>0?"::":""), (i>0?known_service_types[i]:""), (i>1?"1":"") );
+				//DEBUG DPRINTF(E_DEBUG, L_SSDP, "Sending NOTIFY:\n%s", bufr);
+				n = sendto(sockets[j], bufr, l, 0,
+				           (struct sockaddr *)&sockname, sizeof(struct sockaddr_in) );
+				if(n < 0)
+				{
+					DPRINTF(E_ERROR, L_SSDP, "sendto(udp_shutdown=%d): %s\n", sockets[j], strerror(errno));
+					ret = -1;
+					break;
+				}
 			}
 		}
 	}
-	return 0;
+	return ret;
 }
 
 /* SubmitServicesToMiniSSDPD() :

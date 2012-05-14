@@ -1,4 +1,3 @@
-/* $Id$ */
 /* MiniUPnP project
  * http://miniupnp.free.fr/ or http://miniupnp.tuxfamily.org/
  * author: Ryan Wagoner
@@ -33,6 +32,7 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include "options.h"
+#include "utils.h"
 #include "upnpglobalvars.h"
 
 struct option * ary_options = NULL;
@@ -47,7 +47,6 @@ static const struct {
 	{ UPNPPORT, "port" },
 	{ UPNPPRESENTATIONURL, "presentation_url" },
 	{ UPNPNOTIFY_INTERVAL, "notify_interval" },
-	{ UPNPSYSTEM_UPTIME, "system_uptime" },
 	{ UPNPUUID, "uuid"},
 	{ UPNPSERIAL, "serial"},
 	{ UPNPMODEL_NAME, "model_name"},
@@ -58,6 +57,8 @@ static const struct {
 	{ UPNPINOTIFY, "inotify" },
 	{ UPNPDBDIR, "db_dir" },
 	{ UPNPLOGDIR, "log_dir" },
+	{ UPNPLOGLEVEL, "log_level" },
+	{ UPNPMINISSDPDSOCKET, "minissdpdsocket"},
 	{ ENABLE_TIVO, "enable_tivo" },
 	{ ENABLE_DLNA_STRICT, "strict_dlna" },
 	{ UPNPMINISSDPDSOCKET, "minissdpdsocket"},
@@ -77,7 +78,7 @@ readoptionsfile(const char * fname)
 	int i;
 	enum upnpconfigoptions id;
 
-	if(!fname || (strlen(fname) == 0))
+	if(!fname || *fname == '\0')
 		return -1;
 
 	memset(buffer, 0, sizeof(buffer));
@@ -156,11 +157,20 @@ readoptionsfile(const char * fname)
 		}
 		else
 		{
-			num_options += 1;
-			ary_options = (struct option *) realloc(ary_options, num_options * sizeof(struct option));
+			num_options++;
+			t = realloc(ary_options, num_options * sizeof(struct option));
+			if(!t)
+			{
+				fprintf(stderr, "memory allocation error: %s=%s\n",
+					name, value);
+				num_options--;
+				continue;
+			}
+			else
+				ary_options = (struct option *)t;
 
 			ary_options[num_options-1].id = id;
-			strncpy(ary_options[num_options-1].value, value, MAX_OPTION_VALUE_LEN);
+			strncpyt(ary_options[num_options-1].value, value, MAX_OPTION_VALUE_LEN);
 		}
 
 	}
