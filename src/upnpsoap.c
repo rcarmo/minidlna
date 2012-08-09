@@ -963,6 +963,8 @@ callback(void *args, int argc, char **argv, char **azColName)
 					add_resized_res(srcw, srch, 160, 160, "JPEG_TN", detailID, passed_args);
 			}
 			else if( *mime == 'v' ) {
+				int thumb_id = 0;
+
 				switch( passed_args->client ) {
 				case EToshibaTV:
 					if( dlna_pn &&
@@ -1053,6 +1055,23 @@ callback(void *args, int argc, char **argv, char **azColName)
 					}
 					break;
 				}
+
+				/* Use thumbnail if there is any */
+				thumb_id = sql_get_int_field(db, "SELECT b.ID FROM DETAILS b "
+				                                 "WHERE b.PATH IN ( SELECT PATH || '.jpg' "
+				                                 "                  FROM OBJECTS o , DETAILS d "
+				                                 "                  WHERE o.OBJECT_ID = '%s'"
+				                                 "                        AND o.DETAIL_ID = d.ID ) ", id);
+				//DPRINTF(E_DEBUG, L_HTTP, "Video thumbnail id %d found\n", thumb_id);
+				if( thumb_id > 0 )
+				{
+ 					ret = strcatf(str, "&lt;res protocolInfo=\"http-get:*:%s:%s\"&gt;"
+				                      "http://%s:%d/Resized/%d.jpg?width=160,height=160"
+				                      "&lt;/res&gt;",
+				                      "image/jpeg", "DLNA.ORG_PN=JPEG_TN;DLNA.ORG_CI=1", lan_addr[passed_args->iface].str,
+				                       runtime_vars.port, thumb_id);
+				}
+	
 			}
 		}
 		ret = strcatf(str, "&lt;/item&gt;");
