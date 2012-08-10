@@ -1060,7 +1060,7 @@ callback(void *args, int argc, char **argv, char **azColName)
 				                                 "WHERE b.PATH IN ( SELECT PATH || '.jpg' "
 				                                 "                  FROM OBJECTS o , DETAILS d "
 				                                 "                  WHERE o.OBJECT_ID = '%s'"
-				                                 "                        AND o.DETAIL_ID = d.ID ", id);
+				                                 "                        AND o.DETAIL_ID = d.ID)", id);
 				//DPRINTF(E_DEBUG, L_HTTP, "Video thumbnail id %d found\n", thumb_id);
 				if( thumb_id > 0 )
 				{
