@@ -526,7 +526,7 @@ init(int argc, char * * argv)
 	int options_flag = 0;
 	struct sigaction sa;
 	const char * presurl = NULL;
-	const char * optionsfile = "/etc/minidlna.conf";
+	const char * optionsfile = "/opt/etc/minidlna.conf";
 	char mac_str[13];
 	char *string, *word;
 	enum media_types type;

@@ -149,6 +149,13 @@ AddOption(
     default=True,
     help="Disable internationalization using gettext."
 )
+AddOption(
+    "--enable-static",
+    dest="enable_static",
+    action="store_true",
+    default=False,
+    help="Enable static linking."
+)
 
 db_path = GetOption("db_path")
 log_path = GetOption("log_path")
@@ -243,7 +250,9 @@ if not env.GetOption('clean') and not env.GetOption('help'):
         env.Append(LINKFLAGS = os.environ['LDFLAGS'])
         print(">> Appending custom link flags : " + os.environ['LDFLAGS'])
     
-    
+    if 'PKG_CONFIG_PATH' in os.environ:
+        env["ENV"]["PKG_CONFIG_PATH"] = os.environ.get("PKG_CONFIG_PATH")
+
     if not conf.CheckPKGConfig('0.15.0'):
         print 'pkg-config >= 0.15.0 not found.'
         Exit(1)
@@ -428,8 +437,14 @@ if not env.GetOption('clean') and not env.GetOption('help'):
     conf.Define('PACKAGE_NAME', '"%s"'%str(package_name), "Package name");
 
 
+if GetOption("enable_static"):
+    env.Append(CPPDEFINES=["STATIC"])
+    env.Append(LINKFLAGS=["--static"])
+    static = "--static"
+else :
+    static = ""
 
-env.ParseConfig('pkg-config --cflags --libs  libavformat libavutil libavcodec sqlite3 libexif id3tag flac ogg vorbis')
+env.ParseConfig('pkg-config %s --cflags --libs  libavformat libavutil libavcodec sqlite3 libexif id3tag flac ogg vorbis' % static)
 
 env.Append(CPPDEFINES=['_GNU_SOURCE', ('_FILE_OFFSET_BITS','64'), '_REENTRANT',
                       'HAVE_CONFIG_H'])
