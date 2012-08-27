@@ -29,16 +29,13 @@
 #include <fcntl.h>
 
 #include <libexif/exif-loader.h>
-#include "image_utils.h"
-#include "tagutils/tagutils.h"
 #include <jpeglib.h>
 #include <setjmp.h>
-#include <libavutil/avutil.h>
-#include <libavcodec/avcodec.h>
-#include <libavformat/avformat.h>
-#include "tagutils/tagutils.h"
+#include "libav.h"
 
 #include "upnpglobalvars.h"
+#include "tagutils/tagutils.h"
+#include "image_utils.h"
 #include "upnpreplyparse.h"
 #include "tivo_utils.h"
 #include "metadata.h"
@@ -102,7 +99,7 @@ lav_open(AVFormatContext **ctx, const char *filename)
 #if LIBAVFORMAT_VERSION_INT >= ((53<<16)+(17<<8)+0)
 	ret = avformat_open_input(ctx, filename, NULL, NULL);
 	if (ret == 0)
-        	avformat_find_stream_info(*ctx, NULL);
+		avformat_find_stream_info(*ctx, NULL);
 #else
 	ret = av_open_input_file(ctx, filename, NULL, 0, NULL);
 	if (ret == 0)
@@ -726,7 +723,9 @@ GetVideoMetadata(const char *path, char *name)
 	ret = lav_open(&ctx, path);
 	if( ret != 0 )
 	{
-		DPRINTF(E_WARN, L_METADATA, "Opening %s failed!\n", path);
+		char err[128];
+		av_strerror(ret, err, sizeof(err));
+		DPRINTF(E_WARN, L_METADATA, "Opening %s failed! [%s]\n", path, err);
 		return 0;
 	}
 	//dump_format(ctx, 0, NULL, 0);

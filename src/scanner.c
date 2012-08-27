@@ -36,10 +36,8 @@
 #ifdef ENABLE_NLS
 #include <libintl.h>
 #endif
-#include <libavutil/avutil.h>
-#include <libavformat/avformat.h>
-
 #include <sqlite3.h>
+#include "libav.h"
 
 #include "scanner_sqlite.h"
 #include "upnpglobalvars.h"
