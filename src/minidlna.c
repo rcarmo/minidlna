@@ -529,12 +529,13 @@ init(int argc, char * * argv)
 	const char * optionsfile = "/opt/etc/minidlna.conf";
 	char mac_str[13];
 	char *string, *word;
-	enum media_types type;
 	char *path;
 	char buf[PATH_MAX];
 	char ip_addr[INET_ADDRSTRLEN + 3] = {'\0'};
 	char log_str[75] = "general,artwork,database,inotify,scanner,metadata,http,ssdp,tivo=warn";
 	char *log_level = NULL;
+	struct media_dir_s *media_dir;
+	media_types types;
 	uid_t uid = -1;
 
 	/* first check if "-f" option is used */
@@ -631,30 +632,39 @@ init(int argc, char * * argv)
 				strncpyt(friendly_name, ary_options[i].value, FRIENDLYNAME_MAX_LEN);
 				break;
 			case UPNPMEDIADIR:
-				type = ALL_MEDIA;
+				types = ALL_MEDIA;
 				path = ary_options[i].value;
-				if( *path && (path[1] == ',') && (access(path, F_OK) != 0) )
+				word = strchr(path, ',');
+				if( word && (access(path, F_OK) != 0) )
 				{
-					switch( *path )
+					types = 0;
+					while( *path )
 					{
-					case 'A':
-					case 'a':
-						type = AUDIO_ONLY;
-						break;
-					case 'V':
-					case 'v':
-						type = VIDEO_ONLY;
-						break;
-					case 'P':
-					case 'p':
-						type = IMAGES_ONLY;
-						break;
-					default:
-						DPRINTF(E_FATAL, L_GENERAL, "Media directory entry not understood [%s]\n",
-							ary_options[i].value);
-						break;
+						if( *path == 'A' || *path == 'a' )
+						{
+							types |= TYPE_AUDIO;
+						}
+						else if( *path == 'V' || *path == 'v' )
+						{
+							types |= TYPE_VIDEO;
+						}
+						else if( *path == 'P' || *path == 'p' )
+						{
+							types |= TYPE_IMAGES;
+						}
+						else if( *path == ',' )
+						{
+							path++;
+							break;
+						}
+						else
+						{
+							DPRINTF(E_FATAL, L_GENERAL, "Media directory entry not understood [%s]\n",
+								ary_options[i].value);
+							break;
+						}
+						path++;
 					}
-					path += 2;
 				}
 				path = realpath(path, buf);
 				if( !path || access(path, F_OK) != 0 )
@@ -663,19 +673,19 @@ init(int argc, char * * argv)
 						ary_options[i].value, strerror(errno));
 					break;
 				}
-				struct media_dir_s * this_dir = calloc(1, sizeof(struct media_dir_s));
-				this_dir->path = strdup(path);
-				this_dir->type = type;
+				media_dir = calloc(1, sizeof(struct media_dir_s));
+				media_dir->path = strdup(path);
+				media_dir->types = types;
 				if( !media_dirs )
 				{
-					media_dirs = this_dir;
+					media_dirs = media_dir;
 				}
 				else
 				{
 					struct media_dir_s * all_dirs = media_dirs;
 					while( all_dirs->next )
 						all_dirs = all_dirs->next;
-					all_dirs->next = this_dir;
+					all_dirs->next = media_dir;
 				}
 				break;
 			case UPNPALBUMART_NAMES:
@@ -953,6 +963,11 @@ init(int argc, char * * argv)
 				}
 			}
 			break;
+#ifdef __linux__
+		case 'S':
+			SETFLAG(SYSTEMD_MASK);
+			break;
+#endif
 		case 'V':
 			printf("Version " MINIDLNA_VERSION "\n");
 			exit(0);
@@ -993,6 +1008,9 @@ init(int argc, char * * argv)
 			"\t-h displays this text\n"
 			"\t-R forces a full rescan\n"
 			"\t-L do note create playlists\n"
+#ifdef __linux__
+			"\t-S changes behaviour for systemd\n"
+#endif
 			"\t-V print the version number\n",
 		        argv[0], pidfilename);
 		return 1;
@@ -1007,26 +1025,33 @@ init(int argc, char * * argv)
 	{
 		log_level = log_str;
 	}
+
+	/* Set the default log file path to NULL (stdout) */
+	path = NULL;
 	if(debug_flag)
 	{
 		pid = getpid();
 		strcpy(log_str+65, "maxdebug");
 		log_level = log_str;
-		log_init(NULL, log_level);
+	}
+	else if(GETFLAG(SYSTEMD_MASK))
+	{
+		pid = getpid();
 	}
 	else
 	{
 		pid = daemonize();
 		#ifdef READYNAS
 		unlink("/ramfs/.upnp-av_scan");
-		log_init("/var/log/upnp-av.log", log_level);
+		path = "/var/log/upnp-av.log";
 		#else
 		if( access(db_path, F_OK) != 0 )
 			make_dir(db_path, S_ISVTX|S_IRWXU|S_IRWXG|S_IRWXO);
-		sprintf(buf, "%s/minidlna.log", log_path);
-		log_init(buf, log_level);
+		snprintf(buf, sizeof(buf), "%s/minidlna.log", log_path);
+		path = buf;
 		#endif
 	}
+	log_init(path, log_level);
 
 	if (checkforrunning(pidfilename) < 0)
 	{
