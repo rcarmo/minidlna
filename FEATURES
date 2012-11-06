@@ -1,2 +1,3 @@
 Extra Features
 - dynamic versioning - depends on "git describe" string (foldynl-versioning)
+- automatic image rotation base on EXIF information (foldynl-rotation_hack3)
