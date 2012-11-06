@@ -56,3 +56,7 @@ image_save_to_jpeg_buf(image_s * pimage, int * size);
 
 int
 image_save_to_jpeg_file(image_s * pimage, const char * path);
+
+int
+do_rotation(char *filename, int rotation);
+
