@@ -1,0 +1,2 @@
+Extra Features
+- dynamic versioning - depends on "git describe" string (foldynl-versioning)
