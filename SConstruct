@@ -12,6 +12,7 @@ EnsureSConsVersion(2, 0)
 
 package_name = "MiniDLNA"
 package_tarname = re.sub(r'[^a-z0-9]','_',package_name.lower())
+package_version = os.popen('git describe --tags').readline().rstrip(os.linesep)
 
 colors = {}
 colors['cyan']   = '\033[96m'
@@ -427,7 +428,7 @@ if not env.GetOption('clean') and not env.GetOption('help'):
     conf.config_h_text += "\n"
     conf.Define('PACKAGE_NAME', '"%s"'%str(package_name), "Package name");
 
-
+    conf.Define('MINIDLNA_VERSION', '"%s"'%str(package_version), "Package version");
 
 env.ParseConfig('pkg-config --cflags --libs  libavformat libavutil libavcodec sqlite3 libexif id3tag flac ogg vorbis')
 
