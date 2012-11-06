@@ -1874,7 +1874,7 @@ SendResp_dlnafile(struct upnphttp * h, char * object)
 	}
 	if( id != last_file.id || h->req_client != last_file.client )
 	{
-		snprintf(buf, sizeof(buf), "SELECT PATH, MIME, DLNA_PN, ROTATION from DETAILS where ID = '%lld'", id);
+		snprintf(buf, sizeof(buf), "SELECT PATH, MIME, DLNA_PN, ROTATION from DETAILS where ID = '%lld'", (long long)id);
 		ret = sql_get_table(db, buf, &result, &rows, NULL);
 		if( (ret != SQLITE_OK) )
 		{
