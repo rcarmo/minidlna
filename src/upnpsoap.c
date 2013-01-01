@@ -891,6 +891,14 @@ callback(void *args, int argc, char **argv, char **azColName)
 					add_resized_res(srcw, srch, 160, 160, "JPEG_TN", detailID, passed_args);
 			}
 			else if( *mime == 'v' ) {
+            int srcw, srch;
+				char tmp_buf[300];
+				int tmp_ret;
+				char **tmp_result;
+				int tmp_rows = 0;
+				char *thumb_id = NULL;
+				char *thumb_resolution = NULL;
+
 				switch( passed_args->client ) {
 				case EToshibaTV:
 					if( dlna_pn &&
@@ -981,6 +989,28 @@ callback(void *args, int argc, char **argv, char **azColName)
 					}
 					break;
 				}
+				
+				/* build thumbnail if there is any */
+				snprintf(tmp_buf, sizeof(tmp_buf), "SELECT b.RESOLUTION, b.ID FROM DETAILS b "
+				                                   "WHERE b.PATH IN ( SELECT PATH || '.jpg' "
+				                                   "                  FROM OBJECTS o , DETAILS d "
+				                                   "                  WHERE o.OBJECT_ID = '%s'"
+				                                   "                        AND o.DETAIL_ID = d.ID)", id);
+				
+				tmp_ret = sql_get_table(db, tmp_buf, &tmp_result, &tmp_rows, NULL);
+				
+				if( tmp_ret == SQLITE_OK && tmp_rows )
+				{
+					thumb_resolution = tmp_result[2];
+					thumb_id         = tmp_result[3];
+				   
+					if ( thumb_resolution && thumb_id && sscanf(thumb_resolution, "%6dx%6d", &srcw, &srch) == 2 )
+					{
+						add_resized_res(srcw, srch, 160, 160, "JPEG_TN", thumb_id, passed_args);
+					}
+				}
+           	sqlite3_free_table(tmp_result);
+				//DPRINTF(E_DEBUG, L_HTTP, "Video thumbnail id %s found\n", thumb_id);
 			}
 		}
 		ret = strcatf(str, "&lt;/item&gt;");
