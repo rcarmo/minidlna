@@ -7,3 +7,9 @@ testupnpdescgen
 config.h
 *.pyc
 *.mo
+.built
+.configured
+.deps/
+.staged
+tags
+
