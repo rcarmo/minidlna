@@ -52,6 +52,7 @@
 #include <time.h>
 
 #include "minidlnatypes.h"
+#include "clients.h"
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif /* HAVE_CONFIG_H */
@@ -66,7 +67,6 @@
 # define SERVER_NAME "MiniDLNA"
 #endif
 
-#define CLIENT_CACHE_SLOTS 20
 #define USE_FORK 1
 #define DB_VERSION 9
 
@@ -196,7 +196,7 @@ extern uint32_t runtime_flags;
 #define GETFLAG(mask)	(runtime_flags & mask)
 #define CLEARFLAG(mask)	runtime_flags &= ~mask
 
-extern const char * pidfilename;
+extern const char *pidfilename;
 
 extern char uuidvalue[];
 
@@ -238,9 +238,8 @@ extern sqlite3 *db;
 extern char friendly_name[];
 extern char db_path[];
 extern char log_path[];
-extern struct media_dir_s * media_dirs;
-extern struct album_art_name_s * album_art_names;
-extern struct client_cache_s clients[CLIENT_CACHE_SLOTS];
+extern struct media_dir_s *media_dirs;
+extern struct album_art_name_s *album_art_names;
 extern short int scanning;
 extern volatile short int quitting;
 extern volatile uint32_t updateID;

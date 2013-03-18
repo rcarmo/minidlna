@@ -32,7 +32,8 @@
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif /* HAVE_CONFIG_H */
-#include <netinet/in.h>
+#include "clients.h"
+//#include <netinet/in.h>
 #include <time.h>
 #include <fcntl.h>
 
@@ -68,28 +69,6 @@ enum file_types {
 	TYPE_FILE
 };
 
-enum client_types {
-	EXbox = 1,
-	EPS3,
-	ESamsungSeriesC,
-	EDenonReceiver,
-	EFreeBox,
-	EPopcornHour,
-	EMediaRoom,
-	ESonyBDP,
-	ESonyBravia,
-	ERokuSoundBridge,
-	EToshibaTV,
-	ELGDevice,
-	ENetgearEVA2000,
-	ESamsungSeriesA,
-	ESamsungSeriesB,
-	EMarantzDMP,
-	ELifeTab,
-	EDirecTV,
-	EStandardDLNA150 = 100
-};
-
 struct media_dir_s {
  	char *path;             /* base path */
  	media_types types;      /* types of files to scan */
@@ -100,14 +79,6 @@ struct album_art_name_s {
 	char *name;             /* base path */
 	uint8_t wildcard;
 	struct album_art_name_s *next;
-};
-
-struct client_cache_s {
-	struct in_addr addr;
-	unsigned char mac[6];
-	enum client_types type;
-	uint32_t flags;
-	time_t age;
 };
 
 #endif
