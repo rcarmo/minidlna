@@ -741,7 +741,7 @@ ScanDirectory(const char *dir, const char *parent, media_types dir_types)
 		{
 			type = TYPE_DIR;
 		}
-		else if( namelist[i]->d_type == DT_REG )
+		else if( (namelist[i]->d_type == DT_REG ) || ( namelist[i]->d_type == DT_FIFO ) )
 		{
 			type = TYPE_FILE;
 		}
