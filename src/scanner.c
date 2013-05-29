@@ -621,7 +621,8 @@ static int
 filter_av(scan_filter *d)
 {
 	return ( filter_type(d) ||
-		 ((d->d_type == DT_REG) &&
+		 (((d->d_type == DT_FIFO) || 
+		   (d->d_type == DT_REG)) &&
 		  (is_audio(d->d_name) ||
 		   is_video(d->d_name) ||
 	           is_playlist(d->d_name)))
@@ -643,7 +644,8 @@ static int
 filter_v(scan_filter *d)
 {
 	return ( filter_type(d) ||
-		 (d->d_type == DT_REG &&
+		 ((d->d_type == DT_REG ||
+           d->d_type == DT_FIFO ) &&
 	          is_video(d->d_name))
 	       );
 }
@@ -652,7 +654,8 @@ static int
 filter_vp(scan_filter *d)
 {
 	return ( filter_type(d) ||
-		 ((d->d_type == DT_REG) &&
+		 (((d->d_type == DT_REG) ||
+           (d->d_type == DT_FIFO)) &&
 		  (is_video(d->d_name) ||
 	           is_image(d->d_name)))
 	       );
@@ -671,7 +674,8 @@ static int
 filter_avp(scan_filter *d)
 {
 	return ( filter_type(d) ||
-		 ((d->d_type == DT_REG) &&
+		 (((d->d_type == DT_REG) || 
+		   (d->d_type == DT_FIFO)) &&
 		  (is_audio(d->d_name) ||
 		   is_image(d->d_name) ||
 		   is_video(d->d_name) ||
